@@ -1,0 +1,93 @@
+name: FEWURA CRM Windows build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+
+      - name: Core tests
+        shell: pwsh
+        run: |
+          $env:FEWURA_CRM_DATA_DIR = Join-Path $env:RUNNER_TEMP 'fewura-crm-core'
+          python -m py_compile agent.py fewura_crm/__init__.py fewura_crm/paths.py fewura_crm/db.py fewura_crm/tools.py fewura_crm/prospect_engine.py
+          python -m pytest -q
+          python agent.py --self-test
+
+      - name: Build Windows EXE
+        shell: pwsh
+        run: pyinstaller --clean --noconfirm installer/fewura_crm.spec
+
+      - name: Smoke-test frozen EXE
+        shell: pwsh
+        run: .\TESTER_EXE_WINDOWS.ps1 -ExePath '.\dist\FEWURA_CRM\FEWURA_CRM.exe'
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Setup
+        shell: pwsh
+        run: |
+          $iscc = $null
+          $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          if ($command) { $iscc = $command.Source }
+          if (-not $iscc) {
+            $candidates = @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+              "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+              "$env:ChocolateyInstall\bin\ISCC.exe"
+            )
+            $iscc = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'ISCC.exe introuvable.' }
+          & $iscc '.\installer\FEWURA_CRM.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup a retourne le code $LASTEXITCODE" }
+          if (-not (Test-Path '.\installer\output\FEWURA_CRM_Setup_1.1.0.exe')) { throw 'Setup attendu non cree.' }
+
+      - name: Install final Setup silently
+        shell: pwsh
+        run: |
+          $setup = (Resolve-Path '.\installer\output\FEWURA_CRM_Setup_1.1.0.exe').Path
+          $installDir = Join-Path $env:RUNNER_TEMP 'FEWURA-CRM-installed'
+          if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
+          $args = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$installDir")
+          $p = Start-Process -FilePath $setup -ArgumentList $args -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installation silencieuse echouee: code $($p.ExitCode)" }
+          $installedExe = Join-Path $installDir 'FEWURA_CRM.exe'
+          if (-not (Test-Path $installedExe)) { throw "EXE installe introuvable: $installedExe" }
+          "FEWURA_CRM_INSTALLED_EXE=$installedExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Smoke-test installed application
+        shell: pwsh
+        run: .\TESTER_EXE_WINDOWS.ps1 -ExePath "$env:FEWURA_CRM_INSTALLED_EXE"
+
+      - name: Upload fully tested Windows Setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: FEWURA-CRM-Windows-1.1.0-TESTED
+          path: installer/output/FEWURA_CRM_Setup_1.1.0.exe
+          if-no-files-found: error
