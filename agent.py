@@ -130,7 +130,18 @@ def main() -> int:
 
         _log(f"Démarrage FEWURA CRM {VERSION} sur {HOST}:{port}")
         threading.Thread(target=_wait_and_open, args=(port,), daemon=True).start()
-        config = uvicorn.Config(app=app, host=HOST, port=port, log_level="warning", access_log=False, log_config=None)
+        # FEWURA CRM n'utilise aucune route WebSocket. Forcer ws='none' évite
+        # le chargement inutile du paquet websockets dans l'exécutable PyInstaller,
+        # source d'erreurs de démarrage lorsque ce paquet est mal collecté.
+        config = uvicorn.Config(
+            app=app,
+            host=HOST,
+            port=port,
+            log_level="warning",
+            access_log=False,
+            log_config=None,
+            ws="none",
+        )
         server = uvicorn.Server(config)
 
         def watch_shutdown() -> None:
