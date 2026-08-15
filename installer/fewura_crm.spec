@@ -1,28 +1,31 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from pathlib import Path
 
-hiddenimports = []
-datas = []
-binaries = []
-
-for package in ["agents", "openai", "httpx", "bs4", "lxml", "ddgs", "dns"]:
-    try:
-        d, b, h = collect_all(package)
-        datas += d
-        binaries += b
-        hiddenimports += h
-    except Exception:
-        pass
+ROOT = Path(SPEC).resolve().parent.parent
 
 a = Analysis(
-    ["agent.py"],
-    pathex=["."],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    [str(ROOT / "agent.py")],
+    pathex=[str(ROOT)],
+    binaries=[],
+    datas=[],
+    hiddenimports=[
+        "agents",
+        "openai",
+        "httpx",
+        "bs4",
+        "lxml",
+        "ddgs",
+        "dns",
+        "dns.resolver",
+        "fewura_crm",
+        "fewura_crm.db",
+        "fewura_crm.paths",
+        "fewura_crm.tools",
+        "fewura_crm.prospect_engine",
+    ],
     hookspath=[],
     runtime_hooks=[],
-    excludes=[],
+    excludes=["numpy"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
