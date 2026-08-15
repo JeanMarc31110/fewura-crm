@@ -3,17 +3,23 @@
   "forge_agent": true,
   "name": "FEWURA CRM Agent",
   "slug": "fewura-crm-agent",
-  "version": "1.0.0",
-  "purpose": "Assistant CRM local pour gérer prospects, notes, tâches, priorisation commerciale et exports.",
+  "version": "1.1.0",
+  "purpose": "Assistant CRM local utilisant FEWURA PROSPECT comme moteur unique d'acquisition, puis gérant prospects, notes, tâches, pipeline et exports.",
   "autonomy_level": 2,
+  "acquisition_engine": {
+    "name": "FEWURA PROSPECT",
+    "mode": "embedded_adapted",
+    "capabilities": ["geocoding", "overpass_multi_endpoint", "website_discovery", "public_email_enrichment", "lead_scoring", "deduplication", "crm_merge"]
+  },
   "data_policy": {
     "storage": "%LOCALAPPDATA%\\FEWURA\\CRM",
     "local_first": true,
     "secrets_in_git": false
   },
   "capabilities": [
+    "prospect_search_import",
     "list_prospects",
-    "search_prospects",
+    "search_existing_crm",
     "create_prospect",
     "update_prospect_status",
     "add_note",
@@ -23,16 +29,11 @@
     "export_csv",
     "delete_prospect_with_confirmation"
   ],
-  "human_approval_required": [
-    "delete_prospect",
-    "bulk_delete",
-    "mass_outreach",
-    "irreversible_actions"
-  ],
-  "prohibited_autonomy": [
-    "mass_email_without_explicit_approval",
-    "delete_all_without_explicit_confirmation",
-    "store_api_keys_in_repository"
-  ],
+  "crm_merge_policy": {
+    "preserve": ["status", "contact_name", "notes", "tasks"],
+    "refresh": ["email", "phone", "website", "address", "postal_code", "coordinates", "source", "lead_score"]
+  },
+  "human_approval_required": ["delete_prospect", "bulk_delete", "mass_outreach", "irreversible_actions"],
+  "prohibited_autonomy": ["mass_email_without_explicit_approval", "delete_all_without_explicit_confirmation", "store_api_keys_in_repository"],
   "generated_by": "AURELIA FORGE"
 }
