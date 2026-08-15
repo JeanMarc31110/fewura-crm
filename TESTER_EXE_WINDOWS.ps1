@@ -19,8 +19,8 @@ try {
 
     $p=Start-Process -FilePath $exe -PassThru
     $base='http://127.0.0.1:18020'; $ok=$false
-    for($i=0;$i -lt 80;$i++){Start-Sleep -Milliseconds 250;try{$h=Invoke-RestMethod "$base/health" -TimeoutSec 2;if($h.ok -and $h.version -eq '1.3.0' -and $h.scheduler){$ok=$true;break}}catch{}}
-    if(-not $ok){throw 'Health 1.3.0 inaccessible.'}
+    for($i=0;$i -lt 80;$i++){Start-Sleep -Milliseconds 250;try{$h=Invoke-RestMethod "$base/health" -TimeoutSec 2;if($h.ok -and $h.version -eq '1.3.1' -and $h.scheduler){$ok=$true;break}}catch{}}
+    if(-not $ok){throw 'Health 1.3.1 inaccessible.'}
     $homePage=Invoke-WebRequest "$base/" -UseBasicParsing -TimeoutSec 3
     foreach($text in @('FEWURA PROSPECT','Campagnes','Emails / historique','Paramètres')){if($homePage.Content -notmatch [regex]::Escape($text)){throw "Interface incomplete: $text"}}
     $prospects=Invoke-WebRequest "$base/prospects" -UseBasicParsing -TimeoutSec 3
@@ -46,7 +46,8 @@ try {
 
     Invoke-WebRequest "$base/shutdown" -Method Post -UseBasicParsing -TimeoutSec 3 | Out-Null
     $p.WaitForExit(8000)|Out-Null; if(-not $p.HasExited){Stop-Process -Id $p.Id -Force;throw 'Processus non ferme apres /shutdown.'}
-    Write-Host 'FEWURA CRM 1.3.0 CRM + PROSPECT + CAMPAGNES + EMAIL/WHATSAPP + ANTI-DOUBLON OK' -ForegroundColor Green
+    if(-not (Test-Path (Join-Path $dataRoot 'startup.log'))){throw 'Journal startup.log non cree.'}
+    Write-Host 'FEWURA CRM 1.3.1 INTERFACE + LANCEUR + CRM + PROSPECT + CAMPAGNES OK' -ForegroundColor Green
     exit 0
 }catch{
     if($p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}
