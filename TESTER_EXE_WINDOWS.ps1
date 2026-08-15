@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $exe = (Resolve-Path $ExePath).Path
+$helper = (Resolve-Path '.\SMOKE_HELPER.py').Path
 $dataRoot = Join-Path $env:TEMP ("FEWURA_CRM_SMOKE_" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
 $oldData=$env:FEWURA_CRM_DATA_DIR; $oldNoBrowser=$env:FEWURA_CRM_NO_BROWSER; $oldPort=$env:FEWURA_CRM_PORT
@@ -14,7 +15,7 @@ try {
     $self=Start-Process -FilePath $exe -ArgumentList '--self-test' -Wait -PassThru
     if($self.ExitCode -ne 0){throw "Self-test echoue: $($self.ExitCode)"}
     $db=Join-Path $dataRoot 'fewura_crm.db'; if(-not(Test-Path $db)){throw "Base CRM non creee: $db"}
-    python -c "import sqlite3,sys; db=sys.argv[1]; c=sqlite3.connect(db); c.execute('insert into prospects(company_name,contact_name,email,city,category,lead_score) values(?,?,?,?,?,?)',('Hotel Test Windows','Mme Test','test@example.invalid','Toulouse','hotels',95)); c.execute('insert into prospects(company_name,phone,city,category,lead_score) values(?,?,?,?,?)',('Hotel WhatsApp Test','0612345678','Toulouse','hotels',90)); c.commit(); c.close()" $db
+    python $helper seed $db | Out-Null
 
     $p=Start-Process -FilePath $exe -PassThru
     $base='http://127.0.0.1:18020'; $ok=$false
@@ -33,13 +34,12 @@ try {
 
     $formBody=@{name='Smoke simulation';subject='Bonjour {entreprise}';body='Test {entreprise} {ville}';category='hotels';city='Toulouse';min_score='50';mode='simulation';scheduled_at='';confirm_real=''}
     Invoke-WebRequest "$base/campaigns" -Method Post -Body $formBody -UseBasicParsing -TimeoutSec 5 | Out-Null
-    $cid=(python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute('select max(id) from campaigns').fetchone()[0]); c.close()" $db).Trim()
-    if(-not $cid){throw 'Campagne test non creee.'}
+    $cid=(python $helper latest_campaign $db).Trim(); if(-not $cid){throw 'Campagne test non creee.'}
     Invoke-WebRequest "$base/campaigns/$cid/run" -Method Post -Body @{confirm_real='OUI'} -UseBasicParsing -TimeoutSec 5 | Out-Null
-    $check=(python -c "import sqlite3,sys,json; c=sqlite3.connect(sys.argv[1]); cid=int(sys.argv[2]); print(json.dumps({'logs':c.execute('select count(*) from communications where campaign_id=?',(cid,)).fetchone()[0],'sim':c.execute(\"select count(*) from communications where campaign_id=? and status='simulated'\",(cid,)).fetchone()[0],'email':c.execute(\"select count(*) from campaign_recipients where campaign_id=? and channel='email'\",(cid,)).fetchone()[0],'wa':c.execute(\"select count(*) from campaign_recipients where campaign_id=? and channel='whatsapp'\",(cid,)).fetchone()[0]})); c.close()" $db $cid | ConvertFrom-Json)
+    $check=(python $helper stats $db $cid | ConvertFrom-Json)
     if($check.logs -ne 2 -or $check.sim -ne 2 -or $check.email -ne 1 -or $check.wa -ne 1){throw 'Simulation ou fallback email/WhatsApp incorrect.'}
     Invoke-WebRequest "$base/campaigns/$cid/run" -Method Post -Body @{confirm_real='OUI'} -UseBasicParsing -TimeoutSec 5 | Out-Null
-    $logs2=[int](python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute('select count(*) from communications where campaign_id=?',(int(sys.argv[2]),)).fetchone()[0]); c.close()" $db $cid)
+    $logs2=[int](python $helper logs $db $cid)
     if($logs2 -ne 2){throw 'Anti-double-envoi non respecte.'}
     $history=Invoke-WebRequest "$base/communications" -UseBasicParsing -TimeoutSec 3
     if($history.Content -notmatch 'Hotel Test Windows' -or $history.Content -notmatch 'simulated'){throw 'Historique communications incomplet.'}
