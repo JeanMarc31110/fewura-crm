@@ -10,23 +10,34 @@ on:
 jobs:
   test:
     runs-on: windows-latest
+    env:
+      FEWURA_CRM_DATA_DIR: ${{ runner.temp }}\fewura-crm-ci
+      FEWURA_CRM_NO_BROWSER: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: pip
+          cache-dependency-path: requirements.txt
       - name: Install
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Compile
+      - name: Compile all production modules
         shell: pwsh
-        run: python -m py_compile agent.py fewura_crm/__init__.py fewura_crm/paths.py fewura_crm/db.py fewura_crm/tools.py
-      - name: Tests
+        run: python -m py_compile agent.py fewura_crm/__init__.py fewura_crm/paths.py fewura_crm/db.py fewura_crm/tools.py fewura_crm/prospect_engine.py fewura_crm/outreach.py fewura_crm/web.py
+      - name: Fresh-state functional tests
         shell: pwsh
-        run: python -m pytest -q
+        run: |
+          if (Test-Path $env:FEWURA_CRM_DATA_DIR) { Remove-Item $env:FEWURA_CRM_DATA_DIR -Recurse -Force }
+          python -m pytest -q
       - name: Agent self-test
         shell: pwsh
-        run: python agent.py --self-test
+        run: |
+          if (Test-Path $env:FEWURA_CRM_DATA_DIR) { Remove-Item $env:FEWURA_CRM_DATA_DIR -Recurse -Force }
+          python agent.py --self-test
+      - name: Release gate
+        shell: pwsh
+        run: Write-Host 'SOURCE + TESTS + SELF-TEST VALIDATED' -ForegroundColor Green
