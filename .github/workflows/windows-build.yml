@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           $env:FEWURA_CRM_DATA_DIR = Join-Path $env:RUNNER_TEMP 'fewura-crm-core'
-          python -m py_compile agent.py fewura_crm/__init__.py fewura_crm/paths.py fewura_crm/db.py fewura_crm/tools.py fewura_crm/prospect_engine.py fewura_crm/web.py
+          python -m py_compile agent.py fewura_crm/__init__.py fewura_crm/paths.py fewura_crm/db.py fewura_crm/tools.py fewura_crm/prospect_engine.py fewura_crm/outreach.py fewura_crm/web.py
           python -m pytest -q
           python agent.py --self-test
 
@@ -66,12 +66,12 @@ jobs:
           if (-not $iscc) { throw 'ISCC.exe introuvable.' }
           & $iscc '.\installer\FEWURA_CRM.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup a retourne le code $LASTEXITCODE" }
-          if (-not (Test-Path '.\installer\output\FEWURA_CRM_Setup_1.2.0.exe')) { throw 'Setup attendu non cree.' }
+          if (-not (Test-Path '.\installer\output\FEWURA_CRM_Setup_1.3.0.exe')) { throw 'Setup attendu non cree.' }
 
       - name: Install final Setup silently
         shell: pwsh
         run: |
-          $setup = (Resolve-Path '.\installer\output\FEWURA_CRM_Setup_1.2.0.exe').Path
+          $setup = (Resolve-Path '.\installer\output\FEWURA_CRM_Setup_1.3.0.exe').Path
           $installDir = Join-Path $env:RUNNER_TEMP 'FEWURA-CRM-installed'
           if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
           $args = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$installDir")
@@ -88,6 +88,6 @@ jobs:
       - name: Upload fully tested Windows Setup
         uses: actions/upload-artifact@v4
         with:
-          name: FEWURA-CRM-Windows-1.2.0-TESTED
-          path: installer/output/FEWURA_CRM_Setup_1.2.0.exe
+          name: FEWURA-CRM-Windows-1.3.0-TESTED
+          path: installer/output/FEWURA_CRM_Setup_1.3.0.exe
           if-no-files-found: error
