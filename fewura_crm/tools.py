@@ -3,6 +3,88 @@ from pathlib import Path
 from agents import function_tool
 from .db import init_db, rows, one, execute, connect
 from .paths import exports_dir
+from .prospect_engine import search_businesses, fingerprint, lead_score
+
+
+def _merge_prospect_from_fewura(p: dict) -> tuple[int, bool]:
+    """Importe/actualise une fiche FEWURA Prospect sans écraser le suivi CRM."""
+    init_db()
+    p = dict(p)
+    p["fingerprint"] = p.get("fingerprint") or fingerprint(p)
+    p["lead_score"] = int(p.get("lead_score") or lead_score(p))
+    p["confidence"] = float(p.get("confidence") or round(p["lead_score"] / 100, 2))
+
+    con = connect()
+    old = con.execute("SELECT * FROM prospects WHERE fingerprint=?", (p["fingerprint"],)).fetchone()
+    if old is None:
+        # Repli utile pour les anciennes fiches CRM qui n'avaient pas encore de fingerprint.
+        old = con.execute(
+            "SELECT * FROM prospects WHERE lower(trim(company_name))=lower(trim(?)) AND lower(trim(coalesce(city,'')))=lower(trim(?)) ORDER BY id LIMIT 1",
+            (p.get("company_name") or "", p.get("city") or ""),
+        ).fetchone()
+
+    fields = [
+        "company_name", "email", "phone", "website", "city", "category", "lead_score",
+        "address", "postal_code", "region", "country", "lat", "lon", "contact_form_url",
+        "source_url", "source_type", "confidence", "fingerprint",
+    ]
+
+    if old:
+        old = dict(old)
+        # Pour les coordonnées, une valeur fraîche remplit le vide ou remplace la source technique,
+        # mais le pipeline CRM (status/contact_name/notes/tasks) reste intact.
+        values = []
+        for field in fields:
+            fresh = p.get(field)
+            current = old.get(field)
+            if field == "lead_score":
+                value = max(int(current or 0), int(fresh or 0))
+            elif field in {"company_name", "city", "category", "address", "postal_code", "region", "country", "lat", "lon", "source_url", "source_type", "confidence", "fingerprint"}:
+                value = fresh if fresh not in (None, "") else current
+            else:
+                value = fresh if fresh not in (None, "") else current
+            values.append(value)
+        assignments = ",".join(f"{field}=?" for field in fields)
+        con.execute(
+            f"UPDATE prospects SET {assignments}, source='fewura-prospect', last_checked_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            values + [old["id"]],
+        )
+        pid = old["id"]
+        created = False
+    else:
+        columns = fields + ["source", "status"]
+        values = [p.get(field) for field in fields] + ["fewura-prospect", "nouveau"]
+        placeholders = ",".join("?" for _ in columns)
+        con.execute(f"INSERT INTO prospects({','.join(columns)}) VALUES({placeholders})", values)
+        pid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+        created = True
+    con.commit()
+    con.close()
+    return int(pid), created
+
+
+@function_tool
+def prospect_search_import(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True) -> dict:
+    """Utilise le moteur FEWURA PROSPECT pour trouver des entreprises et les importer/mettre à jour dans le CRM."""
+    found = search_businesses(zone, category, radius_km, max_results, enrich=enrich)
+    created = 0
+    updated = 0
+    ids = []
+    for prospect in found:
+        pid, is_created = _merge_prospect_from_fewura(prospect)
+        ids.append(pid)
+        created += 1 if is_created else 0
+        updated += 0 if is_created else 1
+    return {
+        "ok": True,
+        "engine": "FEWURA PROSPECT",
+        "zone": zone,
+        "category": category,
+        "found": len(found),
+        "created": created,
+        "updated": updated,
+        "prospect_ids": ids,
+    }
 
 
 @function_tool
@@ -15,7 +97,7 @@ def list_prospects(limit: int = 50) -> list[dict]:
 
 @function_tool
 def search_prospects(query: str, limit: int = 50) -> list[dict]:
-    """Recherche des prospects par entreprise, contact, email, téléphone, ville ou catégorie."""
+    """Filtre les fiches déjà présentes dans le CRM; ce n'est pas le moteur de prospection externe."""
     init_db()
     q = f"%{query.strip()}%"
     limit = max(1, min(limit, 200))
@@ -29,13 +111,21 @@ def search_prospects(query: str, limit: int = 50) -> list[dict]:
 
 @function_tool
 def create_prospect(company_name: str, contact_name: str = "", email: str = "", phone: str = "", website: str = "", city: str = "", category: str = "", source: str = "agent") -> dict:
-    """Crée un prospect CRM."""
+    """Crée manuellement un prospect CRM."""
     init_db()
     if not company_name.strip():
         return {"ok": False, "error": "company_name requis"}
+    candidate = {
+        "company_name": company_name.strip(), "email": email.strip(), "phone": phone.strip(),
+        "website": website.strip(), "city": city.strip(), "category": category.strip(),
+    }
+    fp = fingerprint(candidate)
+    existing = one("SELECT * FROM prospects WHERE fingerprint=?", (fp,))
+    if existing:
+        return {"ok": False, "error": "Prospect déjà présent", "prospect": existing}
     pid = execute(
-        "INSERT INTO prospects(company_name,contact_name,email,phone,website,city,category,source) VALUES(?,?,?,?,?,?,?,?)",
-        (company_name.strip(), contact_name.strip(), email.strip(), phone.strip(), website.strip(), city.strip(), category.strip(), source.strip()),
+        "INSERT INTO prospects(company_name,contact_name,email,phone,website,city,category,source,fingerprint,lead_score) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (company_name.strip(), contact_name.strip(), email.strip(), phone.strip(), website.strip(), city.strip(), category.strip(), source.strip(), fp, lead_score(candidate)),
     )
     return {"ok": True, "prospect": one("SELECT * FROM prospects WHERE id=?", (pid,))}
 
@@ -92,7 +182,8 @@ def crm_summary() -> dict:
     with_phone = one("SELECT count(*) n FROM prospects WHERE phone IS NOT NULL AND trim(phone)<>''")["n"]
     open_tasks = one("SELECT count(*) n FROM tasks WHERE status<>'terminee'")["n"]
     statuses = rows("SELECT status, count(*) n FROM prospects GROUP BY status ORDER BY n DESC")
-    return {"prospects": total, "emails": with_email, "phones": with_phone, "open_tasks": open_tasks, "statuses": statuses}
+    sourced = one("SELECT count(*) n FROM prospects WHERE source='fewura-prospect'")["n"]
+    return {"prospects": total, "fewura_prospect": sourced, "emails": with_email, "phones": with_phone, "open_tasks": open_tasks, "statuses": statuses}
 
 
 @function_tool
@@ -101,9 +192,13 @@ def export_prospects_csv() -> dict:
     init_db()
     data = rows("SELECT * FROM prospects ORDER BY id")
     path: Path = exports_dir() / "prospects.csv"
-    fields = ["id", "company_name", "contact_name", "email", "phone", "website", "city", "category", "status", "lead_score", "source", "created_at", "updated_at"]
-    with path.open("w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+    fields = [
+        "id", "company_name", "contact_name", "email", "phone", "website", "address", "postal_code",
+        "city", "category", "status", "lead_score", "confidence", "source", "source_url", "source_type",
+        "created_at", "updated_at", "last_checked_at",
+    ]
+    with path.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(data)
     return {"ok": True, "count": len(data), "path": str(path)}
@@ -126,6 +221,7 @@ def delete_prospect(prospect_id: int, confirmation: str) -> dict:
 
 
 TOOLS = [
+    prospect_search_import,
     list_prospects,
     search_prospects,
     create_prospect,
