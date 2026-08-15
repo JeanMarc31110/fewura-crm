@@ -1,10 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import copy_metadata, collect_data_files
 
 ROOT = Path(SPEC).resolve().parent.parent
 
-runtime_metadata = []
+runtime_datas = []
 for dist_name in [
     "mcp",
     "openai-agents",
@@ -17,15 +17,20 @@ for dist_name in [
     "httpx2",
 ]:
     try:
-        runtime_metadata += copy_metadata(dist_name)
+        runtime_datas += copy_metadata(dist_name)
     except Exception:
         pass
+
+try:
+    runtime_datas += collect_data_files("agents")
+except Exception:
+    pass
 
 a = Analysis(
     [str(ROOT / "agent.py")],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=runtime_metadata,
+    datas=runtime_datas,
     hiddenimports=[
         "agents",
         "openai",
