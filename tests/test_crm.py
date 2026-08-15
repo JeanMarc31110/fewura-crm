@@ -3,9 +3,9 @@ import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
 
+import pytest
+
 TEST_ROOT = Path.cwd() / ".testdata"
-if TEST_ROOT.exists():
-    shutil.rmtree(TEST_ROOT)
 os.environ["FEWURA_CRM_DATA_DIR"] = str(TEST_ROOT)
 
 from fastapi.testclient import TestClient
@@ -14,6 +14,15 @@ from fewura_crm.prospect_engine import build_overpass_query, fingerprint
 from fewura_crm.tools import _merge_prospect_from_fewura
 from fewura_crm.outreach import create_campaign, run_campaign, process_due_campaigns, schedule_campaign
 from fewura_crm.web import app
+
+
+@pytest.fixture(autouse=True)
+def clean_database_before_each_test():
+    """Every test starts from a brand-new CRM, exactly like a fresh client install."""
+    if TEST_ROOT.exists():
+        shutil.rmtree(TEST_ROOT)
+    init_db()
+    yield
 
 
 def test_schema_and_crud():
