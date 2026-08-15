@@ -9,6 +9,12 @@ def connect():
     return con
 
 
+def _ensure_column(con, table: str, column: str, definition: str) -> None:
+    cols = {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def init_db() -> None:
     con = connect()
     con.executescript("""
@@ -44,6 +50,16 @@ def init_db() -> None:
       FOREIGN KEY(prospect_id) REFERENCES prospects(id) ON DELETE SET NULL
     );
     """)
+    for column, definition in [
+        ("address", "TEXT"), ("postal_code", "TEXT"), ("region", "TEXT"),
+        ("country", "TEXT DEFAULT 'FR'"), ("lat", "REAL"), ("lon", "REAL"),
+        ("contact_form_url", "TEXT"), ("source_url", "TEXT"), ("source_type", "TEXT"),
+        ("confidence", "REAL DEFAULT 0"), ("fingerprint", "TEXT"),
+        ("last_checked_at", "TEXT"),
+    ]:
+        _ensure_column(con, "prospects", column, definition)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_prospects_fingerprint ON prospects(fingerprint)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_prospects_company_city ON prospects(company_name, city)")
     con.commit()
     con.close()
 
