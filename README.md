@@ -3,7 +3,29 @@
 Agent CRM local conçu selon les standards AURELIA FORGE.
 
 ## Mission
-FEWURA CRM Agent centralise les prospects, notes et tâches commerciales, aide à prioriser les leads et fournit une interface conversationnelle locale pilotée par OpenAI Agents SDK.
+FEWURA CRM Agent utilise désormais **FEWURA PROSPECT comme moteur unique d'acquisition**. Une recherche de nouvelles entreprises passe par FEWURA PROSPECT, puis les résultats sont importés ou fusionnés directement dans le CRM.
+
+## Acquisition FEWURA PROSPECT
+Le moteur intégré reprend les fonctions de FEWURA PROSPECT :
+- géocodage Nominatim ;
+- recherche Overpass avec plusieurs serveurs de secours ;
+- catégories métiers FEWURA ;
+- découverte du site officiel quand il manque ;
+- extraction d'e-mails professionnels publics et de téléphones ;
+- scoring des leads ;
+- dédoublonnage ;
+- import/merge automatique dans le CRM.
+
+La commande agent correspondante est `prospect_search_import(zone, category, radius_km, max_results, enrich)`.
+
+`search_prospects` reste uniquement un filtre des fiches **déjà présentes dans le CRM** ; il n'est plus considéré comme un moteur de prospection.
+
+## Adaptation CRM
+Lorsqu'une entreprise existe déjà, une nouvelle recherche FEWURA PROSPECT :
+- actualise/enrichit email, téléphone, site, adresse, localisation, source et score ;
+- conserve le statut commercial actuel ;
+- conserve le nom de contact saisi manuellement ;
+- conserve toutes les notes et tâches.
 
 ## Principes
 - données CRM locales sous `%LOCALAPPDATA%\FEWURA\CRM` sous Windows ;
@@ -19,7 +41,8 @@ FEWURA CRM Agent centralise les prospects, notes et tâches commerciales, aide �
 
 ## Commandes agent
 L'agent peut notamment :
-- lister et rechercher les prospects ;
+- rechercher de nouveaux prospects avec FEWURA PROSPECT et les importer ;
+- lister et filtrer les prospects du CRM ;
 - créer ou modifier un prospect ;
 - ajouter des notes ;
 - ajouter ou terminer des tâches ;
@@ -29,5 +52,7 @@ L'agent peut notamment :
 ## Tests
 `python -m pytest -q`
 
+Les tests vérifient notamment la requête `Toulouse + hotels` et la conservation du pipeline CRM lors d'un ré-enrichissement FEWURA PROSPECT.
+
 ## Forge
-Le fichier `forge_manifest.json` décrit l'Agent DNA de FEWURA CRM.
+Le fichier `forge_manifest.json` décrit l'Agent DNA de FEWURA CRM et déclare FEWURA PROSPECT comme moteur d'acquisition.
