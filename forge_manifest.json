@@ -1,10 +1,10 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "forge_agent": true,
   "name": "FEWURA CRM Agent",
   "slug": "fewura-crm-agent",
-  "version": "1.1.0",
-  "purpose": "Assistant CRM local utilisant FEWURA PROSPECT comme moteur unique d'acquisition, puis gérant prospects, notes, tâches, pipeline et exports.",
+  "version": "1.3.1",
+  "purpose": "Assistant CRM local utilisant FEWURA PROSPECT comme moteur unique d'acquisition, puis gérant prospects, notes, tâches, pipeline, campagnes et exports.",
   "autonomy_level": 2,
   "acquisition_engine": {
     "name": "FEWURA PROSPECT",
@@ -27,13 +27,37 @@
     "complete_task",
     "crm_summary",
     "export_csv",
-    "delete_prospect_with_confirmation"
+    "delete_prospect_with_confirmation",
+    "scheduled_outreach",
+    "email_smtp",
+    "whatsapp_cloud_fallback"
   ],
   "crm_merge_policy": {
     "preserve": ["status", "contact_name", "notes", "tasks"],
     "refresh": ["email", "phone", "website", "address", "postal_code", "coordinates", "source", "lead_score"]
   },
+  "release_gate": {
+    "policy": "fail_closed",
+    "remote_install_ready_only_if_all_pass": true,
+    "required_checks": [
+      "compile_all_production_modules",
+      "fresh_database_functional_tests",
+      "agent_self_test",
+      "windows_exe_build",
+      "frozen_exe_smoke_test",
+      "installer_build",
+      "clean_windows_install",
+      "installed_application_smoke_test",
+      "crm_management_ui",
+      "fewura_prospect_ui",
+      "campaign_simulation",
+      "email_whatsapp_fallback",
+      "anti_duplicate_outreach",
+      "clean_shutdown_without_orphan_process"
+    ],
+    "artifact_rule": "Never publish or label an installer TESTED unless every required check passes in the same Windows build workflow."
+  },
   "human_approval_required": ["delete_prospect", "bulk_delete", "mass_outreach", "irreversible_actions"],
-  "prohibited_autonomy": ["mass_email_without_explicit_approval", "delete_all_without_explicit_confirmation", "store_api_keys_in_repository"],
+  "prohibited_autonomy": ["mass_email_without_explicit_approval", "delete_all_without_explicit_confirmation", "store_api_keys_in_repository", "publish_failed_or_partially_tested_build"],
   "generated_by": "AURELIA FORGE"
 }
