@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "forge_agent": true,
+  "name": "FEWURA CRM Agent",
+  "slug": "fewura-crm-agent",
+  "version": "1.0.0",
+  "purpose": "Assistant CRM local pour gérer prospects, notes, tâches, priorisation commerciale et exports.",
+  "autonomy_level": 2,
+  "data_policy": {
+    "storage": "%LOCALAPPDATA%\\FEWURA\\CRM",
+    "local_first": true,
+    "secrets_in_git": false
+  },
+  "capabilities": [
+    "list_prospects",
+    "search_prospects",
+    "create_prospect",
+    "update_prospect_status",
+    "add_note",
+    "add_task",
+    "complete_task",
+    "crm_summary",
+    "export_csv",
+    "delete_prospect_with_confirmation"
+  ],
+  "human_approval_required": [
+    "delete_prospect",
+    "bulk_delete",
+    "mass_outreach",
+    "irreversible_actions"
+  ],
+  "prohibited_autonomy": [
+    "mass_email_without_explicit_approval",
+    "delete_all_without_explicit_confirmation",
+    "store_api_keys_in_repository"
+  ],
+  "generated_by": "AURELIA FORGE"
+}
