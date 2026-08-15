@@ -72,6 +72,15 @@ def test_campaign_simulation_personalization_and_antiduplicate():
     assert one("SELECT count(*) n FROM communications WHERE campaign_id=?", (cid,))["n"] == 2
 
 
+def test_campaign_category_aliases_match_fewura_prospect_values():
+    init_db()
+    pid = execute("INSERT INTO prospects(company_name,email,city,category,lead_score) VALUES(?,?,?,?,?)", ("Alias Hôtel","alias@hotel.test","Toulouse","hotel",88))
+    cid = create_campaign("Alias hôtels","Objet","Message","hotels","Toulouse",50,"simulation","")
+    recipient = one("SELECT * FROM campaign_recipients WHERE campaign_id=? AND prospect_id=?", (cid,pid))
+    assert recipient is not None
+    assert recipient["channel"] == "email"
+
+
 def test_due_scheduler_executes_simulation():
     init_db()
     execute("INSERT INTO prospects(company_name,email,lead_score) VALUES(?,?,?)", ("Gamma","gamma@test.fr",70))
