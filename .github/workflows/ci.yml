@@ -1,0 +1,32 @@
+name: FEWURA CRM Agent CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compile
+        shell: pwsh
+        run: python -m py_compile agent.py fewura_crm/__init__.py fewura_crm/paths.py fewura_crm/db.py fewura_crm/tools.py
+      - name: Tests
+        shell: pwsh
+        run: python -m pytest -q
+      - name: Agent self-test
+        shell: pwsh
+        run: python agent.py --self-test
