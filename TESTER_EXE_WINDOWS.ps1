@@ -20,8 +20,8 @@ try {
     $base='http://127.0.0.1:18020'; $ok=$false
     for($i=0;$i -lt 80;$i++){Start-Sleep -Milliseconds 250;try{$h=Invoke-RestMethod "$base/health" -TimeoutSec 2;if($h.ok -and $h.version -eq '1.3.0' -and $h.scheduler){$ok=$true;break}}catch{}}
     if(-not $ok){throw 'Health 1.3.0 inaccessible.'}
-    $home=Invoke-WebRequest "$base/" -UseBasicParsing -TimeoutSec 3
-    foreach($text in @('FEWURA PROSPECT','Campagnes','Emails / historique','Paramètres')){if($home.Content -notmatch [regex]::Escape($text)){throw "Interface incomplete: $text"}}
+    $homePage=Invoke-WebRequest "$base/" -UseBasicParsing -TimeoutSec 3
+    foreach($text in @('FEWURA PROSPECT','Campagnes','Emails / historique','Paramètres')){if($homePage.Content -notmatch [regex]::Escape($text)){throw "Interface incomplete: $text"}}
     $prospects=Invoke-WebRequest "$base/prospects" -UseBasicParsing -TimeoutSec 3
     if($prospects.Content -notmatch 'Supprimer la sélection' -or $prospects.Content -notmatch 'Supprimer tout'){throw 'Gestion contacts incomplete.'}
     $engine=Invoke-WebRequest "$base/prospect" -UseBasicParsing -TimeoutSec 3
@@ -31,8 +31,8 @@ try {
     $settings=Invoke-WebRequest "$base/settings" -UseBasicParsing -TimeoutSec 3
     if($settings.Content -notmatch 'Email SMTP' -or $settings.Content -notmatch 'Meta WhatsApp Business Cloud'){throw 'Parametres canaux absents.'}
 
-    $body=@{name='Smoke simulation';subject='Bonjour {entreprise}';body='Test {entreprise} {ville}';category='hotels';city='Toulouse';min_score='50';mode='simulation';scheduled_at='';confirm_real=''}
-    Invoke-WebRequest "$base/campaigns" -Method Post -Body $body -UseBasicParsing -TimeoutSec 5 | Out-Null
+    $formBody=@{name='Smoke simulation';subject='Bonjour {entreprise}';body='Test {entreprise} {ville}';category='hotels';city='Toulouse';min_score='50';mode='simulation';scheduled_at='';confirm_real=''}
+    Invoke-WebRequest "$base/campaigns" -Method Post -Body $formBody -UseBasicParsing -TimeoutSec 5 | Out-Null
     $cid=(python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute('select max(id) from campaigns').fetchone()[0]); c.close()" $db).Trim()
     if(-not $cid){throw 'Campagne test non creee.'}
     Invoke-WebRequest "$base/campaigns/$cid/run" -Method Post -Body @{confirm_real='OUI'} -UseBasicParsing -TimeoutSec 5 | Out-Null
