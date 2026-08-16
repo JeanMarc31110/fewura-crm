@@ -13,7 +13,7 @@ from fewura_crm.db import init_db, execute, one, rows
 from fewura_crm.prospect_engine import build_overpass_query, fingerprint
 import fewura_crm.prospect_engine as prospect_engine
 from fewura_crm.tools import _merge_prospect_from_fewura
-from fewura_crm.outreach import create_campaign, run_campaign, process_due_campaigns, schedule_campaign
+from fewura_crm.outreach import create_campaign, create_campaign_for_selection, run_campaign, process_due_campaigns, schedule_campaign
 from fewura_crm.web import app
 
 
@@ -138,3 +138,25 @@ def test_overpass_reduces_heavy_query_after_all_relays_fail(monkeypatch):
     assert len(calls) == 2
     assert "around:20000" in calls[0]
     assert "around:10000" in calls[1]
+
+
+def test_campaign_targets_only_selected_prospects_and_channel():
+    init_db()
+    email_id = execute(
+        "INSERT INTO prospects(company_name,email,phone,lead_score) VALUES(?,?,?,?)",
+        ("Selected Email", "contact@example.test", "0612345678", 80),
+    )
+    other_id = execute(
+        "INSERT INTO prospects(company_name,email,lead_score) VALUES(?,?,?)",
+        ("Not Selected", "other@example.test", 80),
+    )
+    cid = create_campaign_for_selection(
+        "Sélection test", "Bonjour {entreprise}", "Message pour {entreprise}",
+        [email_id], channel="email", mode="simulation",
+    )
+    recipients = rows(
+        "SELECT prospect_id,channel,status FROM campaign_recipients WHERE campaign_id=?",
+        (cid,),
+    )
+    assert recipients == [{"prospect_id": email_id, "channel": "email", "status": "pending"}]
+    assert all(row["prospect_id"] != other_id for row in recipients)
