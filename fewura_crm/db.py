@@ -58,6 +58,7 @@ def init_db() -> None:
       name TEXT NOT NULL,
       subject TEXT NOT NULL,
       body TEXT NOT NULL,
+      sms_body TEXT NOT NULL DEFAULT '',
       category TEXT,
       city TEXT,
       min_score INTEGER DEFAULT 0,
@@ -97,6 +98,7 @@ def init_db() -> None:
       FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     );
     """)
+    _ensure_column(con, "campaigns", "sms_body", "TEXT NOT NULL DEFAULT ''")
     for column, definition in [
         ("address", "TEXT"), ("postal_code", "TEXT"), ("region", "TEXT"),
         ("country", "TEXT DEFAULT 'FR'"), ("lat", "REAL"), ("lon", "REAL"),
