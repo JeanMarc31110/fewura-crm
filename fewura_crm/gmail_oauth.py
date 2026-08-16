@@ -137,7 +137,7 @@ def test_connection() -> dict:
     return {"ok": True, "account": email or _config()["account"], "messages_total": data.get("messagesTotal", 0)}
 
 
-def _raw_message(to: str, subject: str, body: str, from_email: str, from_name: str, html: str = "") -> str:
+def _raw_message(to: str, subject: str, body: str, from_email: str, from_name: str = "FEWURA CRM", html: str = "") -> str:
     message = EmailMessage()
     message["From"] = formataddr((from_name, from_email))
     message["To"] = to
