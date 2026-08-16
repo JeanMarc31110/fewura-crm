@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSON
 from .db import init_db, rows, one, execute, connect
 from .tools import prospect_search_import, crm_summary, export_prospects_csv
 from .outreach import (
-    create_campaign, schedule_campaign, run_campaign, retry_errors, outreach_summary,
+    create_campaign, create_campaign_for_selection, schedule_campaign, run_campaign, retry_errors, outreach_summary,
     smtp_status, sms_status, save_smtp, save_sms, test_sms_gateway, start_scheduler,
 )
 
@@ -56,7 +56,7 @@ def prospects(q: str="", status: str=""):
     if status: where.append("status=?"); params.append(status)
     data=rows("SELECT * FROM prospects"+(" WHERE "+" AND ".join(where) if where else "")+" ORDER BY lead_score DESC,id DESC LIMIT 500",tuple(params))
     filt=f'''<form class="toolbar" method="get"><input style="max-width:320px" name="q" value="{esc(q)}" placeholder="Entreprise, contact, email, téléphone, ville"><select style="max-width:180px" name="status"><option value="">Tous statuts</option>{''.join(f'<option value="{x}" {"selected" if x==status else ""}>{x}</option>' for x in STATUSES)}</select><button class="btn">Filtrer</button><a class="btn light" href="/prospects">Réinitialiser</a><a class="btn secondary" href="/export/csv">Exporter CSV</a></form>'''
-    toolbar='''<div class="toolbar"><button type="button" class="btn light" id="selall">Tout sélectionner</button><button type="button" class="btn light" id="clear">Désélectionner</button><span id="count">0 sélectionné</span><button class="btn danger" form="bulk" formaction="/prospects/delete-selected">Supprimer la sélection</button><form method="post" action="/prospects/delete-all" onsubmit="return confirm('ATTENTION : supprimer TOUS les contacts ?')"><input type="hidden" name="confirmation" value="SUPPRIMER_TOUT"><button class="btn danger">Supprimer tout</button></form></div>'''
+    toolbar='''<div class="toolbar"><button type="button" class="btn light" id="selall">Tout sélectionner</button><button type="button" class="btn light" id="clear">Désélectionner</button><span id="count">0 sélectionné</span><button class="btn success" form="bulk" formaction="/campaigns/from-selection">Créer un envoi depuis la sélection</button><button class="btn danger" form="bulk" formaction="/prospects/delete-selected">Supprimer la sélection</button><form method="post" action="/prospects/delete-all" onsubmit="return confirm('ATTENTION : supprimer TOUS les contacts ?')"><input type="hidden" name="confirmation" value="SUPPRIMER_TOUT"><button class="btn danger">Supprimer tout</button></form></div>'''
     trs=[]
     for p in data:
         opts=''.join(f'<option value="{x}" {"selected" if x==p["status"] else ""}>{x}</option>' for x in STATUSES)
@@ -118,6 +118,38 @@ def campaigns_page():
     form='''<section class="card"><h2>Nouvelle campagne</h2><div class="notice"><b>Simulation</b> n'envoie rien. En mode réel : email si disponible, sinon SMS via le téléphone +33 7 73 54 78 57. Configurez SMTP/SMS dans Paramètres puis confirmez explicitement.</div><form method="post" action="/campaigns"><div class="row"><label>Nom<input name="name" required></label><label>Objet email<input name="subject" required value="Bonjour {entreprise}"></label><label>Activité<select name="category"><option value="">Toutes</option>'''+''.join(f'<option value="{c}">{c}</option>' for c in CATEGORIES if c!='all')+'''</select></label><label>Ville<input name="city"></label><label>Score minimum<input type="number" name="min_score" value="0" min="0" max="100"></label><label>Mode<select name="mode"><option value="simulation">Simulation</option><option value="reel">Réel</option></select></label><label>Programmer date/heure<input type="datetime-local" name="scheduled_at"></label></div><label>Message<textarea name="body" rows="8" required>Bonjour {contact},\n\nNous vous contactons au sujet de {entreprise} à {ville}.\n\nCordialement,\nFEWURA</textarea></label><label><input type="checkbox" name="confirm_real" value="OUI"> Je confirme que le mode réel peut envoyer des emails et SMS</label><button class="btn success">Créer la campagne</button></form></section>'''
     table='<section class="card"><h2>Campagnes</h2><div class="table-wrap"><table><tr><th>Nom</th><th>Mode</th><th>Planifiée</th><th>État</th><th>Dest.</th><th>Envoyés</th><th>Erreurs</th><th>Actions</th></tr>'+''.join(f'''<tr><td>{esc(c['name'])}</td><td>{esc(c['mode'])}</td><td>{esc(c.get('scheduled_at'))}</td><td>{esc(c['status'])}</td><td>{c['recipients']}</td><td>{c['sent']}</td><td>{c['errors']}</td><td><form method="post" action="/campaigns/{c['id']}/run" style="display:inline"><input type="hidden" name="confirm_real" value="OUI"><button class="btn">Exécuter</button></form> <form method="post" action="/campaigns/{c['id']}/retry" style="display:inline"><button class="btn warn">Réessayer erreurs</button></form></td></tr>''' for c in data)+'</table></div></section>'
     return layout(form+table,'Campagnes')
+
+@app.post('/campaigns/from-selection', response_class=HTMLResponse)
+def campaign_from_selection(ids:list[int]=Form(default=[])):
+    ids = list(dict.fromkeys(int(pid) for pid in ids if int(pid) > 0))
+    if not ids:
+        return layout('<section class="card dangerbox"><h2>Aucun prospect sélectionné</h2><p>Sélectionnez au moins un prospect dans Contacts.</p></section>')
+    hidden = ''.join(f'<input type="hidden" name="ids" value="{pid}">' for pid in ids)
+    body = f'''<section class="card"><h2>Nouvel envoi — {len(ids)} prospect(s) sélectionné(s)</h2>
+<div class="notice">Simulation par défaut : aucun message ne sera envoyé. Le mode réel exige une confirmation explicite et la configuration du canal.</div>
+<form method="post" action="/campaigns/from-selection/create">{hidden}
+<div class="row"><label>Nom<input name="name" required value="Envoi sélection"></label><label>Canal<select name="channel"><option value="auto">Automatique (email puis SMS)</option><option value="email">Email uniquement</option><option value="sms">SMS uniquement</option></select></label><label>Mode<select name="mode"><option value="simulation">Simulation</option><option value="reel">Réel</option></select></label><label>Programmer date/heure<input type="datetime-local" name="scheduled_at"></label></div>
+<label>Objet email<input name="subject" required value="Bonjour {{entreprise}}"></label>
+<label>Message<textarea name="body" rows="8" required>Bonjour {{contact}},
+
+Nous vous contactons au sujet de {{entreprise}} à {{ville}}.
+
+Cordialement,
+FEWURA</textarea></label>
+<label><input type="checkbox" name="confirm_real" value="OUI"> Je confirme que le mode réel peut envoyer les messages sélectionnés</label>
+<button class="btn success">Créer l’envoi</button> <a class="btn light" href="/prospects">Annuler</a></form></section>'''
+    return layout(body,'Envoi ciblé')
+
+@app.post('/campaigns/from-selection/create')
+def campaign_from_selection_create(
+    ids:list[int]=Form(default=[]), name:str=Form(...), subject:str=Form(...), body:str=Form(...),
+    channel:str=Form('auto'), mode:str=Form('simulation'), scheduled_at:str=Form(''), confirm_real:str=Form('')
+):
+    if mode == 'reel' and confirm_real != 'OUI':
+        return layout('<section class="card dangerbox"><h2>Confirmation requise</h2><p>Le mode réel doit être confirmé.</p></section>')
+    create_campaign_for_selection(name, subject, body, ids, channel, mode, scheduled_at)
+    return RedirectResponse('/campaigns',303)
+
 @app.post('/campaigns')
 def campaign_create(name:str=Form(...),subject:str=Form(...),body:str=Form(...),category:str=Form(""),city:str=Form(""),min_score:int=Form(0),mode:str=Form('simulation'),scheduled_at:str=Form(""),confirm_real:str=Form("")):
     if mode=='reel' and confirm_real!='OUI': return layout('<section class="card dangerbox"><h2>Confirmation requise</h2><p>Le mode réel doit être confirmé.</p></section>')
