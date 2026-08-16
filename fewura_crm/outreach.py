@@ -178,6 +178,46 @@ def create_campaign(name: str, subject: str, body: str, category: str = "", city
     return int(cid)
 
 
+def create_campaign_for_selection(
+    name: str,
+    subject: str,
+    body: str,
+    prospect_ids: list[int],
+    channel: str = "auto",
+    mode: str = "simulation",
+    scheduled_at: str = "",
+) -> int:
+    init_db()
+    if mode not in {"simulation", "reel"}:
+        raise ValueError("Mode campagne invalide")
+    if channel not in {"auto", "email", "sms"}:
+        raise ValueError("Canal invalide")
+    ids = list(dict.fromkeys(int(pid) for pid in prospect_ids if int(pid) > 0))[:500]
+    if not ids:
+        raise ValueError("Aucun prospect sélectionné")
+    con = connect()
+    cur = con.execute(
+        "INSERT INTO campaigns(name,subject,body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?)",
+        (name.strip(), subject.strip(), body.strip(), "", "", 0, mode, scheduled_at or None, "planifiee" if scheduled_at else "brouillon"),
+    )
+    cid = int(cur.lastrowid)
+    marks = ",".join("?" for _ in ids)
+    prospects = con.execute(f"SELECT * FROM prospects WHERE id IN ({marks}) ORDER BY id", tuple(ids)).fetchall()
+    for p in prospects:
+        selected = channel
+        if selected == "auto":
+            selected = "email" if (p["email"] or "").strip() else ("sms" if (p["phone"] or "").strip() else "none")
+        available = bool((p["email"] if selected == "email" else p["phone"] if selected == "sms" else "").strip())
+        status = "pending" if available else "skipped"
+        con.execute(
+            "INSERT OR IGNORE INTO campaign_recipients(campaign_id,prospect_id,channel,status) VALUES(?,?,?,?)",
+            (cid, p["id"], selected, status),
+        )
+    con.commit()
+    con.close()
+    return cid
+
+
 def schedule_campaign(campaign_id: int, scheduled_at: str, mode: str) -> None:
     if mode not in {"simulation", "reel"}:
         raise ValueError("Mode invalide")
