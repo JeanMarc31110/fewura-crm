@@ -35,7 +35,8 @@ CATEGORIES = {
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass.nchc.org.tw/api/interpreter",
 ]
 
@@ -88,7 +89,8 @@ def build_overpass_query(lat: float, lon: float, radius: int, category: str) -> 
 def _fetch_overpass(query: str) -> dict:
     headers = {"User-Agent": os.getenv("USER_AGENT", "FEWURA-CRM-PROSPECT/1.0")}
     errors = []
-    with httpx.Client(timeout=45, headers=headers, follow_redirects=True) as client:
+    timeout = httpx.Timeout(connect=8.0, read=35.0, write=15.0, pool=8.0)
+    with httpx.Client(timeout=timeout, headers=headers, follow_redirects=True) as client:
         for endpoint in OVERPASS_ENDPOINTS:
             try:
                 response = client.post(endpoint, data={"data": query})
@@ -290,7 +292,16 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
     geo = geocode(zone)
     radius = max(1000, min(int(radius_km) * 1000, 50000))
     limit = max(1, min(int(max_results), 100))
-    data = _fetch_overpass(build_overpass_query(geo["lat"], geo["lon"], radius, category))
+    query = build_overpass_query(geo["lat"], geo["lon"], radius, category)
+    try:
+        data = _fetch_overpass(query)
+    except RuntimeError:
+        # Les requêtes "all" sur un grand rayon peuvent dépasser les quotas publics.
+        # Réduire le rayon permet un second essai moins coûteux sans masquer l'erreur finale.
+        if radius <= 10000:
+            raise
+        reduced_radius = max(1000, radius // 2)
+        data = _fetch_overpass(build_overpass_query(geo["lat"], geo["lon"], reduced_radius, category))
     output = []
     seen = set()
     for element in data.get("elements", []):
