@@ -18,6 +18,82 @@ _scheduler_lock = threading.Lock()
 
 SMS_SENDER_NUMBER = "+33773547857"
 
+APPROVED_EMAIL_SUBJECT = "Optimisez votre activité et développez votre clientèle avec un Agent IA"
+APPROVED_EMAIL_BODY = """Bonjour,
+
+Je me permets de vous présenter les solutions FÉWURA basées sur l’intelligence artificielle.
+
+1. Agent IA pour automatiser la facturation électronique obligatoire
+
+- Création et traitement des factures ;
+- Suivi des paiements et des relances ;
+- Centralisation des documents ;
+- Réduction des tâches administratives.
+
+2. Agent IA de prospection commerciale
+
+- Recherche de nouveaux prospects ;
+- Identification des entreprises adaptées à votre activité ;
+- Augmentation de votre clientèle ;
+- Préparation et suivi de vos campagnes commerciales.
+
+3. Agent IA pour optimiser la production
+
+- Organisation et planification de la production ;
+- Suivi des tâches et des délais ;
+- Optimisation des ressources ;
+- Réduction des pertes de temps ;
+- Amélioration du suivi des commandes et des opérations.
+
+🎁 Offre de lancement : -20 % pour les 1 000 premiers clients.
+
+Bénéficiez également de 20 minutes de communication gratuite pour analyser vos besoins.
+
+Téléphone : +33 7 73 54 78 57
+WhatsApp : https://wa.me/33773547857
+Site : https://innovatechsoftware.eu
+
+Bien cordialement,
+
+Jean Marc
+FÉWURA SYSTEMS"""
+
+APPROVED_SMS_BODY = """Bonjour,
+
+FÉWURA SYSTEMS propose des solutions IA pour les TPE et PME :
+
+1. Facturation électronique
+- Création et traitement des factures
+- Suivi des paiements et relances
+- Centralisation des documents
+
+2. Prospection commerciale
+- Recherche de nouveaux prospects
+- Identification d’entreprises adaptées
+- Préparation et suivi des campagnes
+
+3. Optimisation de la production
+- Organisation et planification
+- Suivi des tâches et délais
+- Optimisation des ressources
+- Suivi des commandes et opérations
+
+OFFRE DE LANCEMENT : -20 % pour les 1 000 premiers clients.
+
+20 minutes de communication gratuites pour analyser vos besoins.
+
+SITE WEB :
+https://innovatechsoftware.eu
+
+WHATSAPP :
+https://wa.me/33773547857
+
+Téléphone : +33 7 73 54 78 57
+
+Bien cordialement,
+Jean Marc
+FÉWURA SYSTEMS"""
+
 CATEGORY_ALIASES = {
     "restaurants": ["restaurants", "restaurant", "fast_food", "cafe"],
     "hotels": ["hotels", "hotel", "guest_house", "motel"],
@@ -153,14 +229,14 @@ def _normalize_phone(value: str) -> str:
     return "+" + digits if plus or digits.startswith("33") else "+" + digits
 
 
-def create_campaign(name: str, subject: str, body: str, category: str = "", city: str = "", min_score: int = 0, mode: str = "simulation", scheduled_at: str = "") -> int:
+def create_campaign(name: str, subject: str = APPROVED_EMAIL_SUBJECT, body: str = APPROVED_EMAIL_BODY, category: str = "", city: str = "", min_score: int = 0, mode: str = "simulation", scheduled_at: str = "", sms_body: str = APPROVED_SMS_BODY) -> int:
     init_db()
     if mode not in {"simulation", "reel"}:
         raise ValueError("Mode campagne invalide")
     con = connect()
     cur = con.execute(
-        "INSERT INTO campaigns(name,subject,body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?)",
-        (name.strip(), subject.strip(), body.strip(), category.strip(), city.strip(), int(min_score or 0), mode, scheduled_at or None, "planifiee" if scheduled_at else "brouillon"),
+        "INSERT INTO campaigns(name,subject,body,sms_body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (name.strip(), subject.strip() or APPROVED_EMAIL_SUBJECT, body.strip() or APPROVED_EMAIL_BODY, sms_body.strip() or APPROVED_SMS_BODY, category.strip(), city.strip(), int(min_score or 0), mode, scheduled_at or None, "planifiee" if scheduled_at else "brouillon"),
     )
     cid = cur.lastrowid
     where = ["lead_score>=?"]
@@ -195,6 +271,7 @@ def create_campaign_for_selection(
     channel: str = "auto",
     mode: str = "simulation",
     scheduled_at: str = "",
+    sms_body: str = APPROVED_SMS_BODY,
 ) -> int:
     init_db()
     if mode not in {"simulation", "reel"}:
@@ -206,8 +283,8 @@ def create_campaign_for_selection(
         raise ValueError("Aucun prospect sélectionné")
     con = connect()
     cur = con.execute(
-        "INSERT INTO campaigns(name,subject,body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?)",
-        (name.strip(), subject.strip(), body.strip(), "", "", 0, mode, scheduled_at or None, "planifiee" if scheduled_at else "brouillon"),
+        "INSERT INTO campaigns(name,subject,body,sms_body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (name.strip(), subject.strip() or APPROVED_EMAIL_SUBJECT, body.strip() or APPROVED_EMAIL_BODY, sms_body.strip() or APPROVED_SMS_BODY, "", "", 0, mode, scheduled_at or None, "planifiee" if scheduled_at else "brouillon"),
     )
     cid = int(cur.lastrowid)
     marks = ",".join("?" for _ in ids)
@@ -337,7 +414,8 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
         p = dict(row)
         rid = row["id"]
         channel = row["channel"]
-        subject, body = _render(camp["subject"], p), _render(camp["body"], p)
+        subject = _render(camp["subject"] or APPROVED_EMAIL_SUBJECT, p)
+        body = _render((camp.get("sms_body") if channel == "sms" else camp["body"]) or (APPROVED_SMS_BODY if channel == "sms" else APPROVED_EMAIL_BODY), p)
         recipient = p.get("email") if channel == "email" else p.get("phone")
         stats["processed"] += 1
         try:
