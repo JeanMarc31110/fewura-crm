@@ -13,6 +13,7 @@ from pathlib import Path
 import uvicorn
 
 from fewura_crm.db import init_db
+from fewura_crm.legacy_config import migrate_legacy_smtp_settings
 from fewura_crm.paths import data_dir
 from fewura_crm.web import app, shutdown_requested, VERSION
 
@@ -120,6 +121,9 @@ def self_test() -> int:
 def main() -> int:
     try:
         init_db()
+        migration = migrate_legacy_smtp_settings()
+        if migration.get("migrated"):
+            _log("Configuration SMTP de l'ancien FEWURA migrée automatiquement")
         port, existing = _choose_port()
         url = f"http://{HOST}:{port}/"
         if existing:
@@ -130,9 +134,6 @@ def main() -> int:
 
         _log(f"Démarrage FEWURA CRM {VERSION} sur {HOST}:{port}")
         threading.Thread(target=_wait_and_open, args=(port,), daemon=True).start()
-        # FEWURA CRM n'utilise aucune route WebSocket. Forcer ws='none' évite
-        # le chargement inutile du paquet websockets dans l'exécutable PyInstaller,
-        # source d'erreurs de démarrage lorsque ce paquet est mal collecté.
         config = uvicorn.Config(
             app=app,
             host=HOST,
