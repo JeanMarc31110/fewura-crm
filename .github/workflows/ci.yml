@@ -10,9 +10,6 @@ on:
 jobs:
   test:
     runs-on: windows-latest
-    env:
-      FEWURA_CRM_DATA_DIR: ${{ runner.temp }}\fewura-crm-ci
-      FEWURA_CRM_NO_BROWSER: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,11 +28,13 @@ jobs:
       - name: Fresh-state functional tests
         shell: pwsh
         run: |
-          if (Test-Path $env:FEWURA_CRM_DATA_DIR) { Remove-Item $env:FEWURA_CRM_DATA_DIR -Recurse -Force }
+          $env:FEWURA_CRM_NO_BROWSER = '1'
           python -m pytest -q
       - name: Agent self-test
         shell: pwsh
         run: |
+          $env:FEWURA_CRM_DATA_DIR = Join-Path $env:RUNNER_TEMP 'fewura-crm-self-test'
+          $env:FEWURA_CRM_NO_BROWSER = '1'
           if (Test-Path $env:FEWURA_CRM_DATA_DIR) { Remove-Item $env:FEWURA_CRM_DATA_DIR -Recurse -Force }
           python agent.py --self-test
       - name: Release gate
