@@ -13,7 +13,7 @@ from fewura_crm.db import init_db, execute, one, rows
 from fewura_crm.prospect_engine import build_overpass_query, fingerprint
 import fewura_crm.prospect_engine as prospect_engine
 from fewura_crm.tools import _merge_prospect_from_fewura
-from fewura_crm.outreach import create_campaign, create_campaign_for_selection, run_campaign, process_due_campaigns, schedule_campaign, _send_email
+from fewura_crm.outreach import create_campaign, create_campaign_for_selection, run_campaign, process_due_campaigns, schedule_campaign, _send_email, APPROVED_EMAIL_BODY, APPROVED_SMS_BODY
 import fewura_crm.gmail_oauth as gmail_oauth
 from fewura_crm.web import app
 
@@ -189,3 +189,17 @@ def test_email_prefers_gmail_oauth_over_smtp(monkeypatch):
     _send_email({"email": "dest@example.test"}, "Objet", "Message")
     assert len(calls) == 1
     assert calls[0]["to"] == "dest@example.test"
+
+
+def test_approved_email_and_sms_templates_are_selected_by_channel():
+    init_db()
+    email_id = execute("INSERT INTO prospects(company_name,email) VALUES(?,?)", ("Email cible", "email@example.test"))
+    sms_id = execute("INSERT INTO prospects(company_name,phone) VALUES(?,?)", ("SMS cible", "0612345678"))
+    cid = create_campaign_for_selection("Modèles validés", "", "", [email_id, sms_id], channel="auto", mode="simulation")
+    result = run_campaign(cid)
+    assert result["simulated"] == 2 and result["errors"] == 0
+    email_log = one("SELECT body FROM communications WHERE campaign_id=? AND channel='email'", (cid,))
+    sms_log = one("SELECT body FROM communications WHERE campaign_id=? AND channel='sms'", (cid,))
+    assert email_log["body"] == APPROVED_EMAIL_BODY
+    assert sms_log["body"] == APPROVED_SMS_BODY
+    assert "https://innovatechsoftware.eu" in sms_log["body"]
