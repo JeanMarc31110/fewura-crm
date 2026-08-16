@@ -28,6 +28,11 @@ RestartApplications=no
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 
+[InstallDelete]
+; Les donnees CRM sont dans %LOCALAPPDATA%\FEWURA\CRM et ne sont pas touchees.
+; On supprime uniquement l'ancien programme pour eviter tout melange de DLL/modules Python.
+Type: filesandordirs; Name: "{app}\*"
+
 [Files]
 Source: "..\dist\FEWURA_CRM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -37,3 +42,15 @@ Name: "{autodesktop}\FEWURA CRM"; Filename: "{app}\{#MyAppExeName}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Lancer FEWURA CRM"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if CurStep = ssInstall then
+  begin
+    { Ferme de force toutes les anciennes instances avant remplacement des fichiers. }
+    Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM FEWURA_CRM.exe >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+end;
