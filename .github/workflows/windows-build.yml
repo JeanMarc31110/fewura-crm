@@ -68,6 +68,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup a retourne le code $LASTEXITCODE" }
           if (-not (Test-Path '.\installer\output\FEWURA_CRM_Setup_1.3.1.exe')) { throw 'Setup attendu non cree.' }
 
+      - name: Prepare legacy install and stale shortcut collision
+        shell: pwsh
+        run: |
+          $legacy1 = Join-Path $env:LOCALAPPDATA 'Programs\FEWURA CRM'
+          $legacy2 = Join-Path $env:LOCALAPPDATA 'Programs\FEWURA\CRM'
+          New-Item -ItemType Directory -Force -Path $legacy1,$legacy2 | Out-Null
+          Set-Content -Path (Join-Path $legacy1 'websockets.py') -Value 'STALE LEGACY FILE'
+          Set-Content -Path (Join-Path $legacy2 'FEWURA_CRM.exe') -Value 'STALE LEGACY EXE'
+          $desktop = [Environment]::GetFolderPath('Desktop')
+          if ($desktop) {
+            New-Item -ItemType Directory -Force -Path $desktop | Out-Null
+            $ws = New-Object -ComObject WScript.Shell
+            $lnk = $ws.CreateShortcut((Join-Path $desktop 'FEWURA CRM.lnk'))
+            $lnk.TargetPath = (Join-Path $legacy2 'FEWURA_CRM.exe')
+            $lnk.WorkingDirectory = $legacy2
+            $lnk.Save()
+          }
+          "FEWURA_LEGACY1=$legacy1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FEWURA_LEGACY2=$legacy2" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Install final Setup silently
         shell: pwsh
         run: |
@@ -79,7 +99,30 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "Installation silencieuse echouee: code $($p.ExitCode)" }
           $installedExe = Join-Path $installDir 'FEWURA_CRM.exe'
           if (-not (Test-Path $installedExe)) { throw "EXE installe introuvable: $installedExe" }
+          if (Test-Path (Join-Path $env:FEWURA_LEGACY1 'websockets.py')) { throw 'Ancien fichier legacy non supprime.' }
+          if (Test-Path (Join-Path $env:FEWURA_LEGACY2 'FEWURA_CRM.exe')) { throw 'Ancien EXE legacy non supprime.' }
           "FEWURA_CRM_INSTALLED_EXE=$installedExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Validate desktop shortcut targets new EXE
+        shell: pwsh
+        run: |
+          $expected = (Resolve-Path $env:FEWURA_CRM_INSTALLED_EXE).Path
+          $desktopPaths = @(
+            [Environment]::GetFolderPath('Desktop'),
+            [Environment]::GetFolderPath('CommonDesktopDirectory')
+          ) | Where-Object { $_ }
+          $links = @()
+          $ws = New-Object -ComObject WScript.Shell
+          foreach ($d in $desktopPaths) {
+            $p = Join-Path $d 'FEWURA CRM.lnk'
+            if (Test-Path $p) {
+              $target = $ws.CreateShortcut($p).TargetPath
+              $links += [pscustomobject]@{ Link=$p; Target=$target }
+            }
+          }
+          if (-not $links) { throw 'Aucun raccourci FEWURA CRM cree.' }
+          $valid = $links | Where-Object { $_.Target -and ((Resolve-Path $_.Target -ErrorAction SilentlyContinue).Path -eq $expected) }
+          if (-not $valid) { throw ('Raccourci FEWURA CRM pointe vers un ancien EXE: ' + ($links | ConvertTo-Json -Compress)) }
 
       - name: Smoke-test installed application
         shell: pwsh
