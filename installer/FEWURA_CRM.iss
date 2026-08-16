@@ -29,28 +29,48 @@ RestartApplications=no
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 
 [InstallDelete]
-; Les donnees CRM sont dans %LOCALAPPDATA%\FEWURA\CRM et ne sont pas touchees.
-; On supprime uniquement l'ancien programme pour eviter tout melange de DLL/modules Python.
+; IMPORTANT : ne jamais supprimer {localappdata}\FEWURA\CRM : c'est le dossier des DONNEES CRM.
+; Nettoyage du programme actuellement installe.
 Type: filesandordirs; Name: "{app}\*"
+; Nettoyage des anciens emplacements applicatifs utilises pendant le developpement.
+Type: filesandordirs; Name: "{localappdata}\Programs\FEWURA CRM\*"
+Type: filesandordirs; Name: "{localappdata}\Programs\FEWURA\CRM\*"
+Type: filesandordirs; Name: "{autopf}\FEWURA CRM\*"
+; Supprime tous les anciens raccourcis susceptibles de pointer vers un vieil EXE.
+Type: files; Name: "{userdesktop}\FEWURA CRM.lnk"
+Type: files; Name: "{commondesktop}\FEWURA CRM.lnk"
+Type: files; Name: "{userprograms}\FEWURA CRM.lnk"
+Type: files; Name: "{commonprograms}\FEWURA CRM.lnk"
+Type: files; Name: "{userdesktop}\FEWURA_CRM.exe"
+Type: files; Name: "{commondesktop}\FEWURA_CRM.exe"
 
 [Files]
 Source: "..\dist\FEWURA_CRM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\FEWURA CRM"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\FEWURA CRM"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\FEWURA CRM"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
+Name: "{autodesktop}\FEWURA CRM"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Lancer FEWURA CRM"; Flags: nowait postinstall skipifsilent
 
 [Code]
-procedure CurStepChanged(CurStep: TSetupStep);
+procedure StopLegacyInstances();
 var
   ResultCode: Integer;
 begin
+  { Ferme de force toutes les instances portant le nom de l'application. }
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM FEWURA_CRM.exe >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  StopLegacyInstances();
+  Result := True;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
   if CurStep = ssInstall then
-  begin
-    { Ferme de force toutes les anciennes instances avant remplacement des fichiers. }
-    Exec(ExpandConstant('{cmd}'), '/C taskkill /F /T /IM FEWURA_CRM.exe >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  end;
+    StopLegacyInstances();
 end;
