@@ -70,9 +70,10 @@ def test_campaign_simulation_personalization_and_antiduplicate():
     cid = create_campaign("Test hôtels","Bonjour {entreprise}","Bonjour {contact}, société {entreprise} à {ville}","hotels","Toulouse",50,"simulation","")
     recips = rows("SELECT * FROM campaign_recipients WHERE campaign_id=? ORDER BY prospect_id", (cid,))
     assert len(recips) == 2
-    assert {r["channel"] for r in recips} == {"email","whatsapp"}
+    assert {r["channel"] for r in recips} == {"email","sms"}
     result = run_campaign(cid)
     assert result["processed"] == 2 and result["simulated"] == 2 and result["errors"] == 0
+    assert result["sms"] == 1 and result["email"] == 1
     logs = rows("SELECT * FROM communications WHERE campaign_id=? ORDER BY id", (cid,))
     assert len(logs) == 2 and all(x["status"] == "simulated" for x in logs)
     assert any("Alpha Hôtel" in (x["subject"] or "") for x in logs)
@@ -106,8 +107,9 @@ def test_management_web_interface_contains_outreach_sections():
     with TestClient(app) as client:
         assert client.get("/health").json()["version"] == "1.3.1"
         home = client.get("/").text
-        assert "Campagnes" in home and "Emails / historique" in home
+        assert "Campagnes" in home and "Emails / SMS / historique" in home
         campaigns = client.get("/campaigns").text
-        assert "Nouvelle campagne" in campaigns and "Simulation" in campaigns
+        assert "Nouvelle campagne" in campaigns and "Simulation" in campaigns and "SMS" in campaigns
         settings = client.get("/settings").text
-        assert "Email SMTP" in settings and "Meta WhatsApp Business Cloud" in settings
+        assert "Email SMTP" in settings and "SMS via votre téléphone Android" in settings
+        assert "WhatsApp" not in settings
