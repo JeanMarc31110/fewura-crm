@@ -11,6 +11,7 @@ from email.utils import formataddr
 import httpx
 
 from .db import connect, init_db, one, rows
+from . import gmail_oauth
 
 _scheduler_started = False
 _scheduler_lock = threading.Lock()
@@ -48,6 +49,14 @@ def set_settings(values: dict[str, str]) -> None:
         )
     con.commit()
     con.close()
+
+
+def gmail_status() -> dict:
+    return gmail_oauth.status()
+
+
+def test_gmail_connection() -> dict:
+    return gmail_oauth.test_connection()
 
 
 def smtp_status() -> dict:
@@ -229,8 +238,23 @@ def schedule_campaign(campaign_id: int, scheduled_at: str, mode: str) -> None:
 
 def _send_email(prospect: dict, subject: str, body: str) -> None:
     cfg = smtp_status()
+    oauth_cfg = gmail_status()
+    if oauth_cfg["configured"]:
+        try:
+            gmail_oauth.send_email(
+                to=prospect["email"],
+                subject=subject,
+                body=body,
+                from_email=cfg["from_email"] or oauth_cfg["account"],
+                from_name=cfg["from_name"],
+            )
+            return
+        except Exception as oauth_error:
+            if not cfg["configured"]:
+                raise RuntimeError(f"Échec Gmail OAuth : {oauth_error}") from oauth_error
+
     if not cfg["configured"]:
-        raise RuntimeError("SMTP non configuré")
+        raise RuntimeError("Email non configuré : Gmail OAuth et SMTP sont indisponibles")
     msg = EmailMessage()
     msg["From"] = formataddr((cfg["from_name"], cfg["from_email"]))
     msg["To"] = prospect["email"]
