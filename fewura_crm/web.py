@@ -9,6 +9,7 @@ from .tools import prospect_search_import, crm_summary, export_prospects_csv
 from .outreach import (
     create_campaign, create_campaign_for_selection, schedule_campaign, run_campaign, retry_errors, outreach_summary,
     smtp_status, sms_status, save_smtp, save_sms, test_sms_gateway, start_scheduler, gmail_status, test_gmail_connection,
+    APPROVED_EMAIL_SUBJECT, APPROVED_EMAIL_BODY, APPROVED_SMS_BODY,
 )
 
 VERSION = "1.3.1"
@@ -129,31 +130,27 @@ def campaign_from_selection(ids:list[int]=Form(default=[])):
 <div class="notice">Simulation par défaut : aucun message ne sera envoyé. Le mode réel exige une confirmation explicite et la configuration du canal.</div>
 <form method="post" action="/campaigns/from-selection/create">{hidden}
 <div class="row"><label>Nom<input name="name" required value="Envoi sélection"></label><label>Canal<select name="channel"><option value="auto">Automatique (email puis SMS)</option><option value="email">Email uniquement</option><option value="sms">SMS uniquement</option></select></label><label>Mode<select name="mode"><option value="simulation">Simulation</option><option value="reel">Réel</option></select></label><label>Programmer date/heure<input type="datetime-local" name="scheduled_at"></label></div>
-<label>Objet email<input name="subject" required value="Bonjour {{entreprise}}"></label>
-<label>Message<textarea name="body" rows="8" required>Bonjour {{contact}},
-
-Nous vous contactons au sujet de {{entreprise}} à {{ville}}.
-
-Cordialement,
-FEWURA</textarea></label>
+<label>Objet email<input name="subject" required value="{esc(APPROVED_EMAIL_SUBJECT)}"></label>
+<label>Message email<textarea name="body" rows="12" required>{esc(APPROVED_EMAIL_BODY)}</textarea></label>
+<label>Message SMS<textarea name="sms_body" rows="12" required>{esc(APPROVED_SMS_BODY)}</textarea></label>
 <label><input type="checkbox" name="confirm_real" value="OUI"> Je confirme que le mode réel peut envoyer les messages sélectionnés</label>
 <button class="btn success">Créer l’envoi</button> <a class="btn light" href="/prospects">Annuler</a></form></section>'''
     return layout(body,'Envoi ciblé')
 
 @app.post('/campaigns/from-selection/create')
 def campaign_from_selection_create(
-    ids:list[int]=Form(default=[]), name:str=Form(...), subject:str=Form(...), body:str=Form(...),
-    channel:str=Form('auto'), mode:str=Form('simulation'), scheduled_at:str=Form(''), confirm_real:str=Form('')
+    ids:list[int]=Form(default=[]), name:str=Form(...), subject:str=Form(APPROVED_EMAIL_SUBJECT), body:str=Form(APPROVED_EMAIL_BODY),
+    sms_body:str=Form(APPROVED_SMS_BODY), channel:str=Form('auto'), mode:str=Form('simulation'), scheduled_at:str=Form(''), confirm_real:str=Form('')
 ):
     if mode == 'reel' and confirm_real != 'OUI':
         return layout('<section class="card dangerbox"><h2>Confirmation requise</h2><p>Le mode réel doit être confirmé.</p></section>')
-    create_campaign_for_selection(name, subject, body, ids, channel, mode, scheduled_at)
+    create_campaign_for_selection(name, subject, body, ids, channel, mode, scheduled_at, sms_body)
     return RedirectResponse('/campaigns',303)
 
 @app.post('/campaigns')
-def campaign_create(name:str=Form(...),subject:str=Form(...),body:str=Form(...),category:str=Form(""),city:str=Form(""),min_score:int=Form(0),mode:str=Form('simulation'),scheduled_at:str=Form(""),confirm_real:str=Form("")):
+def campaign_create(name:str=Form(...),subject:str=Form(APPROVED_EMAIL_SUBJECT),body:str=Form(APPROVED_EMAIL_BODY),category:str=Form(""),city:str=Form(""),min_score:int=Form(0),mode:str=Form('simulation'),scheduled_at:str=Form(""),confirm_real:str=Form("")):
     if mode=='reel' and confirm_real!='OUI': return layout('<section class="card dangerbox"><h2>Confirmation requise</h2><p>Le mode réel doit être confirmé.</p></section>')
-    create_campaign(name,subject,body,category,city,min_score,mode,scheduled_at); return RedirectResponse('/campaigns',303)
+    create_campaign(name,subject,body,category,city,min_score,mode,scheduled_at,APPROVED_SMS_BODY); return RedirectResponse('/campaigns',303)
 @app.post('/campaigns/{cid}/run')
 def campaign_run(cid:int,confirm_real:str=Form("")):
     c=one("SELECT mode FROM campaigns WHERE id=?",(cid,))
