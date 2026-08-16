@@ -11,6 +11,7 @@ os.environ["FEWURA_CRM_DATA_DIR"] = str(TEST_ROOT)
 from fastapi.testclient import TestClient
 from fewura_crm.db import init_db, execute, one, rows
 from fewura_crm.prospect_engine import build_overpass_query, fingerprint
+import fewura_crm.prospect_engine as prospect_engine
 from fewura_crm.tools import _merge_prospect_from_fewura
 from fewura_crm.outreach import create_campaign, run_campaign, process_due_campaigns, schedule_campaign
 from fewura_crm.web import app
@@ -113,3 +114,27 @@ def test_management_web_interface_contains_outreach_sections():
         settings = client.get("/settings").text
         assert "Email SMTP" in settings and "SMS via votre téléphone Android" in settings
         assert "WhatsApp" not in settings
+
+
+def test_overpass_reduces_heavy_query_after_all_relays_fail(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        prospect_engine,
+        "geocode",
+        lambda zone: {"lat": 43.6045, "lon": 1.4442, "display_name": zone},
+    )
+
+    def fake_fetch(query):
+        calls.append(query)
+        if len(calls) == 1:
+            raise RuntimeError("all public relays failed")
+        return {"elements": []}
+
+    monkeypatch.setattr(prospect_engine, "_fetch_overpass", fake_fetch)
+    result = prospect_engine.search_businesses("Toulouse", radius_km=20, enrich=False)
+
+    assert result == []
+    assert len(calls) == 2
+    assert "around:20000" in calls[0]
+    assert "around:10000" in calls[1]
