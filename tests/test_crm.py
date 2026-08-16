@@ -13,7 +13,8 @@ from fewura_crm.db import init_db, execute, one, rows
 from fewura_crm.prospect_engine import build_overpass_query, fingerprint
 import fewura_crm.prospect_engine as prospect_engine
 from fewura_crm.tools import _merge_prospect_from_fewura
-from fewura_crm.outreach import create_campaign, create_campaign_for_selection, run_campaign, process_due_campaigns, schedule_campaign
+from fewura_crm.outreach import create_campaign, create_campaign_for_selection, run_campaign, process_due_campaigns, schedule_campaign, _send_email
+import fewura_crm.gmail_oauth as gmail_oauth
 from fewura_crm.web import app
 
 
@@ -160,3 +161,31 @@ def test_campaign_targets_only_selected_prospects_and_channel():
     )
     assert recipients == [{"prospect_id": email_id, "channel": "email", "status": "pending"}]
     assert all(row["prospect_id"] != other_id for row in recipients)
+
+
+def test_gmail_oauth_builds_message_without_exposing_credentials():
+    raw = gmail_oauth._raw_message(
+        "dest@example.test", "Objet", "Bonjour", "softwareinnovatech@gmail.com",
+    )
+    assert "dest@example.test" in __import__("base64").urlsafe_b64decode(raw + "==").decode("utf-8")
+    assert "refresh_token" not in raw
+    assert "client_secret" not in raw
+
+
+def test_email_prefers_gmail_oauth_over_smtp(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "fewura_crm.outreach.gmail_status",
+        lambda: {"configured": True, "account": "softwareinnovatech@gmail.com"},
+    )
+    monkeypatch.setattr(
+        "fewura_crm.outreach.smtp_status",
+        lambda: {"configured": False, "from_email": "softwareinnovatech@gmail.com", "from_name": "FEWURA CRM"},
+    )
+    monkeypatch.setattr(
+        "fewura_crm.outreach.gmail_oauth.send_email",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    _send_email({"email": "dest@example.test"}, "Objet", "Message")
+    assert len(calls) == 1
+    assert calls[0]["to"] == "dest@example.test"
