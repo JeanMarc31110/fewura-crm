@@ -12,6 +12,7 @@ import httpx
 
 from .db import connect, init_db, one, rows
 from . import gmail_oauth
+from .time_utils import local_input_to_utc_sql
 
 _scheduler_started = False
 _scheduler_lock = threading.Lock()
@@ -136,14 +137,21 @@ def test_gmail_connection() -> dict:
 
 
 def smtp_status() -> dict:
+    security = get_setting("smtp_security", "starttls").lower()
+    if security not in {"starttls", "ssl", "none"}:
+        security = "starttls"
+    try:
+        port = int(get_setting("smtp_port", "587") or 587)
+    except ValueError:
+        port = 587
     return {
         "configured": bool(get_setting("smtp_host") and get_setting("smtp_from_email")),
         "host": get_setting("smtp_host"),
-        "port": int(get_setting("smtp_port", "587") or 587),
+        "port": port,
         "username": get_setting("smtp_username"),
         "from_email": get_setting("smtp_from_email"),
         "from_name": get_setting("smtp_from_name", "FEWURA CRM"),
-        "security": get_setting("smtp_security", "starttls"),
+        "security": security,
     }
 
 
@@ -160,9 +168,14 @@ def sms_status() -> dict:
 def save_smtp(host: str, port: int, username: str, password: str, from_email: str, from_name: str, security: str) -> None:
     if security not in {"starttls", "ssl", "none"}:
         raise ValueError("Sécurité SMTP invalide")
+    port = int(port)
+    if security == "ssl" and port == 587:
+        port = 465
+    elif security == "starttls" and port == 465:
+        port = 587
     values = {
         "smtp_host": host.strip(),
-        "smtp_port": str(int(port)),
+        "smtp_port": str(port),
         "smtp_username": username.strip(),
         "smtp_from_email": from_email.strip(),
         "smtp_from_name": from_name.strip() or "FEWURA CRM",
@@ -308,7 +321,7 @@ def schedule_campaign(campaign_id: int, scheduled_at: str, mode: str) -> None:
     if mode not in {"simulation", "reel"}:
         raise ValueError("Mode invalide")
     con = connect()
-    con.execute("UPDATE campaigns SET scheduled_at=?,mode=?,status='planifiee' WHERE id=?", (scheduled_at, mode, campaign_id))
+    con.execute("UPDATE campaigns SET scheduled_at=?,mode=?,status='planifiee' WHERE id=?", (local_input_to_utc_sql(scheduled_at), mode, campaign_id))
     con.commit()
     con.close()
 
@@ -319,9 +332,7 @@ def _send_email(prospect: dict, subject: str, body: str) -> None:
     if oauth_cfg["configured"]:
         try:
             gmail_oauth.send_email(
-                to=prospect["email"],
-                subject=subject,
-                body=body,
+                to=prospect["email"], subject=subject, body=body,
                 from_email=cfg["from_email"] or oauth_cfg["account"],
                 from_name=cfg["from_name"],
             )
@@ -338,21 +349,32 @@ def _send_email(prospect: dict, subject: str, body: str) -> None:
     msg["Subject"] = subject
     msg.set_content(body)
     username, password = cfg["username"], get_setting("smtp_password")
-    server = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=30, context=ssl.create_default_context()) if cfg["security"] == "ssl" else smtplib.SMTP(cfg["host"], cfg["port"], timeout=30)
+    security = cfg["security"]
+    stage = "connexion"
     try:
-        server.ehlo()
-        if cfg["security"] == "starttls":
-            server.starttls(context=ssl.create_default_context())
+        if security == "ssl":
+            server = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=30, context=ssl.create_default_context())
+        else:
+            server = smtplib.SMTP(cfg["host"], cfg["port"], timeout=30)
+        with server:
+            stage = "salutation SMTP"
             server.ehlo()
-        if username:
-            server.login(username, password)
-        server.send_message(msg)
-    finally:
-        try:
-            server.quit()
-        except Exception:
-            pass
-
+            if security == "starttls":
+                stage = "négociation STARTTLS"
+                server.starttls(context=ssl.create_default_context())
+                server.ehlo()
+            if username:
+                stage = "authentification"
+                server.login(username, password)
+            stage = "transmission"
+            refused = server.send_message(msg)
+            if refused:
+                raise RuntimeError(f"Destinataires refusés par le serveur : {', '.join(refused)}")
+    except Exception as exc:
+        detail = f"Échec SMTP {cfg['host']}:{cfg['port']} ({security}) pendant {stage} : {exc}"
+        if oauth_cfg["configured"]:
+            detail = f"Échec Gmail OAuth puis SMTP : {detail}"
+        raise RuntimeError(detail) from exc
 
 def _sms_sent_today(con) -> int:
     row = con.execute("SELECT count(*) FROM communications WHERE channel='sms' AND status='sent' AND date(created_at,'localtime')=date('now','localtime')").fetchone()
@@ -468,7 +490,7 @@ def retry_errors(campaign_id: int) -> int:
 
 def process_due_campaigns() -> list[dict]:
     init_db()
-    due = rows("SELECT id FROM campaigns WHERE status='planifiee' AND scheduled_at IS NOT NULL AND datetime(scheduled_at)<=datetime('now','localtime') ORDER BY scheduled_at")
+    due = rows("SELECT id FROM campaigns WHERE status='planifiee' AND scheduled_at IS NOT NULL AND datetime(scheduled_at)<=datetime('now') ORDER BY scheduled_at")
     results = []
     for c in due:
         try:
