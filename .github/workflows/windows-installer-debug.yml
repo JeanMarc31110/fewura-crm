@@ -1,0 +1,28 @@
+name: Windows installer debug
+
+on:
+  push:
+    branches: [ 'windows-installer-debug' ]
+
+jobs:
+  debug:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Basic environment
+        run: |
+          echo "Starting debug run"
+          whoami
+          python --version
+          pip --version
+
+      - name: Create small artifact
+        run: |
+          echo "debug log" > debug.txt
+      - name: Upload debug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-debug-artifact
+          path: debug.txt
