@@ -2,11 +2,12 @@ name: FEWURA CRM Windows build
 
 on:
   push:
-    branches: [main]
+    branches: [main, agent/smtp-timezone-fix]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   windows-build:
@@ -134,3 +135,11 @@ jobs:
           name: FEWURA-CRM-Windows-SMS-ONLY-1.4.3-TESTED
           path: installer/output/FEWURA_CRM_Setup_SMS_ONLY_1.4.3.exe
           if-no-files-found: error
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" ".\\installer\\output\\FEWURA_CRM_Setup_SMS_ONLY_1.4.3.exe" --title "FEWURA CRM ${{ github.ref_name }}" --generate-notes
