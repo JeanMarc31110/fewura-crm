@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    branches: [ 'windows-installer' ]
+    branches: [ 'windows-installer', 'windows-installer-exe' ]
   workflow_dispatch: {}
 
 jobs:
