@@ -61,27 +61,19 @@ jobs:
           name: fewura-crm-windows-${{ github.sha }}.zip
           path: fewura-crm-windows-${{ github.sha }}.zip
 
-      - name: Create GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create GitHub Release and upload asset (requires RELEASE_PAT secret)
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: installer-${{ github.sha }}
-          release_name: "Windows installer ${{ github.sha }}"
-          body: "Automated Windows installer (PyInstaller) built by CI. Download the fewura-crm Windows executable zip attached to this release."
+          tag: installer-${{ github.sha }}
+          name: "Windows installer ${{ github.sha }}"
+          body: "Automated Windows installer (PyInstaller) built by CI."
+          files: fewura-crm-windows-${{ github.sha }}.zip
           draft: false
           prerelease: false
-
-      - name: Upload installer to release
-        uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./fewura-crm-windows-${{ github.sha }}.zip
-          asset_name: fewura-crm-windows-${{ github.sha }}.zip
-          asset_content_type: application/zip
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
 
-      - name: Output download URL
-        run: echo "Release created: ${{ steps.create_release.outputs.html_url }}"
+      - name: Output release info
+        run: |
+          echo "Release tag: installer-${{ github.sha }}"
+          echo "Artifact: fewura-crm-windows-${{ github.sha }}.zip"
