@@ -246,34 +246,41 @@ def create_campaign(name: str, subject: str = APPROVED_EMAIL_SUBJECT, body: str 
     init_db()
     if mode not in {"simulation", "reel"}:
         raise ValueError("Mode campagne invalide")
+    scheduled_at_utc = local_input_to_utc_sql(scheduled_at) if scheduled_at else ""
     con = connect()
-    cur = con.execute(
-        "INSERT INTO campaigns(name,subject,body,sms_body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
-        (name.strip(), subject.strip() or APPROVED_EMAIL_SUBJECT, body.strip() or APPROVED_EMAIL_BODY, sms_body.strip() or APPROVED_SMS_BODY, category.strip(), city.strip(), int(min_score or 0), mode, scheduled_at or None, "planifiee" if scheduled_at else "brouillon"),
-    )
-    cid = cur.lastrowid
-    where = ["lead_score>=?"]
-    params = [int(min_score or 0)]
-    if category:
-        aliases = CATEGORY_ALIASES.get(category, [category])
-        where.append("lower(coalesce(category,'')) IN (" + ",".join("?" for _ in aliases) + ")")
-        params.extend([x.lower() for x in aliases])
-    if city:
-        where.append("lower(coalesce(city,'')) LIKE lower(?)")
-        params.append(f"%{city}%")
-    prospects = con.execute(
-        "SELECT * FROM prospects WHERE " + " AND ".join(where) + " ORDER BY lead_score DESC,id",
-        tuple(params),
-    ).fetchall()
-    for p in prospects:
-        channel = "email" if (p["email"] or "").strip() else ("sms" if (p["phone"] or "").strip() else "none")
-        con.execute(
-            "INSERT OR IGNORE INTO campaign_recipients(campaign_id,prospect_id,channel,status) VALUES(?,?,?,?)",
-            (cid, p["id"], channel, "pending" if channel != "none" else "skipped"),
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        cur = con.execute(
+            "INSERT INTO campaigns(name,subject,body,sms_body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (name.strip(), subject.strip() or APPROVED_EMAIL_SUBJECT, body.strip() or APPROVED_EMAIL_BODY, sms_body.strip() or APPROVED_SMS_BODY, category.strip(), city.strip(), int(min_score or 0), mode, scheduled_at_utc or None, "planifiee" if scheduled_at_utc else "brouillon"),
         )
-    con.commit()
-    con.close()
-    return int(cid)
+        cid = cur.lastrowid
+        where = ["lead_score>=?"]
+        params = [int(min_score or 0)]
+        if category:
+            aliases = CATEGORY_ALIASES.get(category, [category])
+            where.append("lower(coalesce(category,'')) IN (" + ",".join("?" for _ in aliases) + ")")
+            params.extend([x.lower() for x in aliases])
+        if city:
+            where.append("lower(coalesce(city,'')) LIKE lower(?)")
+            params.append(f"%{city}%")
+        prospects = con.execute(
+            "SELECT * FROM prospects WHERE " + " AND ".join(where) + " ORDER BY lead_score DESC,id",
+            tuple(params),
+        ).fetchall()
+        for p in prospects:
+            channel = "email" if (p["email"] or "").strip() else ("sms" if (p["phone"] or "").strip() else "none")
+            con.execute(
+                "INSERT OR IGNORE INTO campaign_recipients(campaign_id,prospect_id,channel,status) VALUES(?,?,?,?)",
+                (cid, p["id"], channel, "pending" if channel != "none" else "skipped"),
+            )
+        con.commit()
+        return int(cid)
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def create_campaign_for_selection(
@@ -294,27 +301,35 @@ def create_campaign_for_selection(
     ids = list(dict.fromkeys(int(pid) for pid in prospect_ids if int(pid) > 0))[:500]
     if not ids:
         raise ValueError("Aucun prospect sélectionné")
+    scheduled_at_utc = local_input_to_utc_sql(scheduled_at) if scheduled_at else ""
     con = connect()
-    cur = con.execute(
-        "INSERT INTO campaigns(name,subject,body,sms_body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
-        (name.strip(), subject.strip() or APPROVED_EMAIL_SUBJECT, body.strip() or APPROVED_EMAIL_BODY, sms_body.strip() or APPROVED_SMS_BODY, "", "", 0, mode, scheduled_at or None, "planifiee" if scheduled_at else "brouillon"),
-    )
-    cid = int(cur.lastrowid)
-    marks = ",".join("?" for _ in ids)
-    prospects = con.execute(f"SELECT * FROM prospects WHERE id IN ({marks}) ORDER BY id", tuple(ids)).fetchall()
-    for p in prospects:
-        selected = channel
-        if selected == "auto":
-            selected = "email" if (p["email"] or "").strip() else ("sms" if (p["phone"] or "").strip() else "none")
-        available = bool((p["email"] if selected == "email" else p["phone"] if selected == "sms" else "").strip())
-        status = "pending" if available else "skipped"
-        con.execute(
-            "INSERT OR IGNORE INTO campaign_recipients(campaign_id,prospect_id,channel,status) VALUES(?,?,?,?)",
-            (cid, p["id"], selected, status),
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        cur = con.execute(
+            "INSERT INTO campaigns(name,subject,body,sms_body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (name.strip(), subject.strip() or APPROVED_EMAIL_SUBJECT, body.strip() or APPROVED_EMAIL_BODY, sms_body.strip() or APPROVED_SMS_BODY, "", "", 0, mode, scheduled_at_utc or None, "planifiee" if scheduled_at_utc else "brouillon"),
         )
-    con.commit()
-    con.close()
-    return cid
+        cid = int(cur.lastrowid)
+        marks = ",".join("?" for _ in ids)
+        prospects = con.execute(f"SELECT * FROM prospects WHERE id IN ({marks}) ORDER BY id", tuple(ids)).fetchall()
+        for p in prospects:
+            selected = channel
+            if selected == "auto":
+                selected = "email" if (p["email"] or "").strip() else ("sms" if (p["phone"] or "").strip() else "none")
+            contact_value = p["email"] if selected == "email" else p["phone"] if selected == "sms" else ""
+            available = bool((contact_value or "").strip())
+            status = "pending" if available else "skipped"
+            con.execute(
+                "INSERT OR IGNORE INTO campaign_recipients(campaign_id,prospect_id,channel,status) VALUES(?,?,?,?)",
+                (cid, p["id"], selected, status),
+            )
+        con.commit()
+        return cid
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def schedule_campaign(campaign_id: int, scheduled_at: str, mode: str) -> None:
@@ -332,7 +347,9 @@ def _send_email(prospect: dict, subject: str, body: str) -> None:
     if oauth_cfg["configured"]:
         try:
             gmail_oauth.send_email(
-                to=prospect["email"], subject=subject, body=body,
+                to=prospect["email"],
+                subject=subject,
+                body=body,
                 from_email=cfg["from_email"] or oauth_cfg["account"],
                 from_name=cfg["from_name"],
             )
@@ -375,6 +392,7 @@ def _send_email(prospect: dict, subject: str, body: str) -> None:
         if oauth_cfg["configured"]:
             detail = f"Échec Gmail OAuth puis SMTP : {detail}"
         raise RuntimeError(detail) from exc
+
 
 def _sms_sent_today(con) -> int:
     row = con.execute("SELECT count(*) FROM communications WHERE channel='sms' AND status='sent' AND date(created_at,'localtime')=date('now','localtime')").fetchone()
@@ -424,6 +442,20 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
     if mode not in {"simulation", "reel"}:
         con.close()
         raise ValueError("Mode invalide")
+    if force_mode is not None:
+        con.execute(
+            "UPDATE campaigns SET mode=?,status='brouillon',finished_at=NULL WHERE id=?",
+            (mode, campaign_id),
+        )
+        if mode == "reel":
+            # Une simulation ne doit pas condamner les destinataires à rester simulés.
+            # Seuls les destinataires simulés sont réarmés : ceux déjà envoyés restent
+            # intacts afin d'empêcher tout doublon lors d'un second clic.
+            con.execute(
+                "UPDATE campaign_recipients SET status='pending',last_error=NULL "
+                "WHERE campaign_id=? AND status='simulated'",
+                (campaign_id,),
+            )
     con.execute("UPDATE campaigns SET status='en_cours',started_at=coalesce(started_at,CURRENT_TIMESTAMP) WHERE id=?", (campaign_id,))
     con.commit()
     recips = con.execute(
@@ -471,6 +503,10 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
             con.commit()
             stats["errors"] += 1
     pending = con.execute("SELECT count(*) FROM campaign_recipients WHERE campaign_id=? AND status='pending'", (campaign_id,)).fetchone()[0]
+    stats["skipped"] = con.execute(
+        "SELECT count(*) FROM campaign_recipients WHERE campaign_id=? AND status='skipped'",
+        (campaign_id,),
+    ).fetchone()[0]
     if pending == 0:
         con.execute("UPDATE campaigns SET status='terminee',finished_at=CURRENT_TIMESTAMP WHERE id=?", (campaign_id,))
     con.commit()
@@ -531,3 +567,4 @@ def start_scheduler(stop_predicate=lambda: False, interval_seconds: int = 15) ->
                     return
                 time.sleep(1)
     threading.Thread(target=loop, name="fewura-outreach-scheduler", daemon=True).start()
+
