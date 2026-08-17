@@ -30,8 +30,22 @@ CATEGORIES = {
     "batiment": {"craft": ["builder", "electrician", "plumber", "carpenter", "painter"]},
     "coiffure": {"shop": ["hairdresser"]},
     "sport": {"leisure": ["fitness_centre", "sports_centre"]},
-    "transport": {"office": ["logistics"], "craft": ["transportation"]},
+    "transport": {
+        "office": ["logistics", "transport", "moving_company", "courier", "freight_forwarder"],
+        "craft": ["transportation"],
+        "industrial": ["logistics"],
+    },
 }
+
+PUBLIC_OWNERSHIP_VALUES = {
+    "government", "public", "state", "municipal", "regional", "local_authority",
+}
+PUBLIC_NAME_MARKERS = (
+    "mairie", "toulouse métropole", "toulouse metropole", "métropole", "metropole",
+    "préfecture", "prefecture", "conseil départemental", "conseil régional", "conseil regional",
+    "ministère", "ministere", "université", "universite", "chu", "crous", "sncf", "ratp",
+    "tisséo", "tisseo", "la poste",
+)
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
@@ -83,7 +97,7 @@ def build_overpass_query(lat: float, lon: float, radius: int, category: str) -> 
         clauses = "".join(f'nwr(around:{radius},{lat},{lon})["{key}"="{value}"];' for key, values in cfg.items() for value in values)
     else:
         clauses = "".join(f'nwr(around:{radius},{lat},{lon})["{key}"];' for key in ["shop", "office", "amenity", "craft", "tourism", "leisure"])
-    return f'[out:json][timeout:30];({clauses});out tags center {max(100, radius // 1000)};'
+    return f'[out:json][timeout:30];({clauses});out tags center;'
 
 
 def _fetch_overpass(query: str) -> dict:
@@ -238,30 +252,56 @@ def _tokens(value: str | None) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9]{3,}", (value or "").lower()) if token not in {"sas", "sarl", "eurl", "sa", "sasu", "france", "entreprise", "societe"}}
 
 
+def _search_web_results(query: str, max_results: int = 8) -> list[dict]:
+    if DDGS is not None:
+        try:
+            return list(DDGS().text(query, region="fr-fr", safesearch="moderate", max_results=max_results) or [])
+        except Exception:
+            pass
+
+    # Fallback for packaged installs where the optional ddgs package is absent.
+    headers = {"User-Agent": os.getenv("USER_AGENT", "Mozilla/5.0 FEWURA-CRM-PROSPECT/1.0")}
+    try:
+        with httpx.Client(timeout=12, headers=headers, follow_redirects=True) as client:
+            response = client.get("https://www.bing.com/search", params={"q": query, "count": max_results})
+            response.raise_for_status()
+        soup = BeautifulSoup(response.text, "lxml")
+        results = []
+        for item in soup.select("li.b_algo")[:max_results]:
+            link = item.select_one("h2 a[href]")
+            if not link:
+                continue
+            results.append({
+                "href": link.get("href"),
+                "title": link.get_text(" ", strip=True),
+                "body": item.get_text(" ", strip=True),
+            })
+        return results
+    except Exception:
+        return []
+
+
 def discover_official_website(company_name: str, city: str | None = None, max_results: int = 8) -> str | None:
-    if not company_name or DDGS is None:
+    if not company_name:
         return None
     query = f'"{company_name}" {city or ""} site officiel contact'.strip()
     company_tokens = _tokens(company_name)
     city_tokens = _tokens(city)
     ranked = []
-    try:
-        for item in DDGS().text(query, region="fr-fr", safesearch="moderate", max_results=max_results) or []:
-            url = item.get("href") or item.get("url")
-            if not url:
-                continue
-            host = _website_domain(url)
-            if not host or host in BLOCKED_HOSTS or any(host.endswith("." + blocked) for blocked in BLOCKED_HOSTS):
-                continue
-            haystack = " ".join([host, item.get("title", ""), item.get("body", "")]).lower()
-            score = 4 * sum(1 for token in company_tokens if token in haystack) + sum(1 for token in city_tokens if token in haystack)
-            if any(word in haystack for word in ("contact", "officiel", "accueil", "cabinet", "agence")):
-                score += 2
-            if host.endswith(".fr"):
-                score += 1
-            ranked.append((score, url))
-    except Exception:
-        return None
+    for item in _search_web_results(query, max_results):
+        url = item.get("href") or item.get("url")
+        if not url:
+            continue
+        host = _website_domain(url)
+        if not host or host in BLOCKED_HOSTS or any(host.endswith("." + blocked) for blocked in BLOCKED_HOSTS):
+            continue
+        haystack = " ".join([host, item.get("title", ""), item.get("body", "")]).lower()
+        score = 4 * sum(1 for token in company_tokens if token in haystack) + sum(1 for token in city_tokens if token in haystack)
+        if any(word in haystack for word in ("contact", "officiel", "accueil", "cabinet", "agence")):
+            score += 2
+        if host.endswith(".fr"):
+            score += 1
+        ranked.append((score, url))
     ranked.sort(key=lambda item: item[0], reverse=True)
     return ranked[0][1] if ranked and ranked[0][0] >= 4 else None
 
@@ -288,10 +328,21 @@ def fingerprint(prospect: dict) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def is_private_business(name: str, tags: dict) -> bool:
+    ownership_values = " ".join(
+        str(tags.get(key, "")).strip().lower()
+        for key in ("ownership", "operator:type", "government", "owner:type")
+    )
+    if any(value in ownership_values.split() for value in PUBLIC_OWNERSHIP_VALUES):
+        return False
+    normalized_name = re.sub(r"\s+", " ", (name or "").strip().lower())
+    return not any(marker in normalized_name for marker in PUBLIC_NAME_MARKERS)
+
+
 def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True) -> list[dict]:
     geo = geocode(zone)
     radius = max(1000, min(int(radius_km) * 1000, 50000))
-    limit = max(1, min(int(max_results), 100))
+    limit = max(1, min(int(max_results), 200))
     query = build_overpass_query(geo["lat"], geo["lon"], radius, category)
     try:
         data = _fetch_overpass(query)
@@ -311,6 +362,8 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
         center = element.get("center", {})
         name = tags.get("name") or tags.get("brand") or tags.get("operator")
         if not name:
+            continue
+        if not is_private_business(name, tags):
             continue
         key = (name.lower().strip(), tags.get("addr:street"), tags.get("addr:housenumber"))
         if key in seen:
@@ -344,8 +397,12 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
             prospect["email"] = normalize_email(prospect["email"])
             if not is_public_business_email(prospect["email"], prospect.get("website")):
                 prospect["email"] = None
+        # A result without any usable contact channel cannot be actioned.
+        if not (str(prospect.get("email") or "").strip() or str(prospect.get("phone") or "").strip()):
+            continue
         prospect["lead_score"] = lead_score(prospect)
         prospect["confidence"] = round(prospect["lead_score"] / 100, 2)
         prospect["fingerprint"] = fingerprint(prospect)
         output.append(prospect)
     return output
+
