@@ -36,12 +36,17 @@ Lorsqu'une entreprise existe déjà, une nouvelle recherche FEWURA PROSPECT :
 
 ## Installation Windows (clients distants)
 
-Le dépôt publie désormais un installateur EXE Windows prêt à l’emploi :
+Le dépôt publie désormais un installateur EXE Windows professionnel :
 
-- télécharger l’archive GitHub Release
-- lancer `FEWURA_CRM_Setup.exe`
-- l’application est installée dans `%LOCALAPPDATA%\Programs\FEWURA CRM`
+- télécharger le fichier `FEWURA_CRM_Setup.exe` depuis la release GitHub
+- lancer l’installateur en mode standard ou silencieux (`/SILENT /NORESTART`)
+- l’application est installée dans `C:\Program Files\FEWURA CRM`
 - renommer `.env.example` en `.env` et renseigner `OPENAI_API_KEY` si nécessaire
+
+### Installations silencieuses
+
+- `FEWURA_CRM_Setup.exe /SILENT /NORESTART`
+- ou via le script PowerShell : `install-client-pro.ps1`
 
 ## Développement
 1. Copier `.env.example` vers `.env` et renseigner `OPENAI_API_KEY`.
