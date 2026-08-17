@@ -55,13 +55,13 @@ def prospect_search_import(zone: str, category: str = "all", radius_km: int = 20
 
 @function_tool
 def list_prospects(limit: int = 50) -> list[dict]:
-    init_db(); limit = max(1, min(limit, 200)); return rows("SELECT * FROM prospects ORDER BY id DESC LIMIT ?", (limit,))
+    init_db(); limit = max(1, min(limit, 200)); return rows("SELECT * FROM prospects WHERE coalesce(email,'')<>'' OR coalesce(phone,'')<>'' ORDER BY id DESC LIMIT ?", (limit,))
 
 
 @function_tool
 def search_prospects(query: str, limit: int = 50) -> list[dict]:
     init_db(); q = f"%{query.strip()}%"; limit = max(1, min(limit, 200))
-    return rows("SELECT * FROM prospects WHERE company_name LIKE ? OR contact_name LIKE ? OR email LIKE ? OR phone LIKE ? OR city LIKE ? OR category LIKE ? ORDER BY lead_score DESC, id DESC LIMIT ?", (q,q,q,q,q,q,limit))
+    return rows("SELECT * FROM prospects WHERE (coalesce(email,'')<>'' OR coalesce(phone,'')<>'') AND (company_name LIKE ? OR contact_name LIKE ? OR email LIKE ? OR phone LIKE ? OR city LIKE ? OR category LIKE ?) ORDER BY lead_score DESC, id DESC LIMIT ?", (q,q,q,q,q,q,limit))
 
 
 @function_tool
@@ -128,3 +128,4 @@ def delete_prospect(prospect_id: int, confirmation: str) -> dict:
 
 
 TOOLS = [prospect_search_import,list_prospects,search_prospects,create_prospect,update_prospect_status,add_note,add_task,complete_task,crm_summary,export_prospects_csv,delete_prospect]
+
