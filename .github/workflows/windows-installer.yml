@@ -48,26 +48,45 @@ jobs:
             build/**/xref-*.html
             dist/agent.exe
 
-      - name: Package artifact
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+
+      - name: Build EXE installer with Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler not found at $iscc"
+          }
+          & $iscc "installer\FEWURA_CRM_Installer.iss"
+          Get-ChildItem .\release -Force | Select-Object FullName, Length
+
+      - name: Package zip fallback
         shell: pwsh
         run: |
           $dest = "fewura-crm-windows-${{ github.sha }}.zip"
           Compress-Archive -Path .\dist\agent.exe -DestinationPath $dest -Force
           Write-Output "Zipped to $dest"
 
-      - name: Upload installer artifact
+      - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: fewura-crm-windows-${{ github.sha }}.zip
-          path: fewura-crm-windows-${{ github.sha }}.zip
+          name: fewura-crm-windows-${{ github.sha }}
+          path: |
+            release/FEWURA_CRM_Setup.exe
+            fewura-crm-windows-${{ github.sha }}.zip
 
       - name: Create GitHub Release and upload asset (requires RELEASE_PAT secret)
         uses: ncipollo/release-action@v1
         with:
           tag: installer-${{ github.sha }}
           name: "Windows installer ${{ github.sha }}"
-          body: "Automated Windows installer (PyInstaller) built by CI."
-          files: fewura-crm-windows-${{ github.sha }}.zip
+          body: "Automated Windows installer (PyInstaller + Inno Setup) built by CI. Install using the EXE installer, or use the ZIP fallback if needed."
+          files: |
+            fewura-crm-windows-${{ github.sha }}.zip
+            release/FEWURA_CRM_Setup.exe
           draft: false
           prerelease: false
         env:
@@ -76,4 +95,5 @@ jobs:
       - name: Output release info
         run: |
           echo "Release tag: installer-${{ github.sha }}"
-          echo "Artifact: fewura-crm-windows-${{ github.sha }}.zip"
+          echo "Primary installer: release/FEWURA_CRM_Setup.exe"
+          echo "Fallback artifact: fewura-crm-windows-${{ github.sha }}.zip"

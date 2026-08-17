@@ -34,6 +34,15 @@ Lorsqu'une entreprise existe déjà, une nouvelle recherche FEWURA PROSPECT :
 - les opérations destructives restent soumises à validation humaine ;
 - architecture compatible avec les standards de génération d'agents de Forge.
 
+## Installation Windows (clients distants)
+
+Le dépôt publie désormais un installateur EXE Windows prêt à l’emploi :
+
+- télécharger l’archive GitHub Release
+- lancer `FEWURA_CRM_Setup.exe`
+- l’application est installée dans `%LOCALAPPDATA%\Programs\FEWURA CRM`
+- renommer `.env.example` en `.env` et renseigner `OPENAI_API_KEY` si nécessaire
+
 ## Développement
 1. Copier `.env.example` vers `.env` et renseigner `OPENAI_API_KEY`.
 2. `install.bat`
