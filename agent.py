@@ -112,7 +112,7 @@ def self_test() -> int:
         "database": data_dir().exists(),
         "web_interface": app is not None,
         "local_only": HOST == "127.0.0.1",
-        "version": VERSION == "1.3.1",
+        "version": VERSION == "1.4.3",
     }
     print({"ok": all(checks.values()), "checks": checks, "version": VERSION})
     return 0 if all(checks.values()) else 2
