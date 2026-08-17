@@ -355,8 +355,7 @@ def _send_email(prospect: dict, subject: str, body: str) -> None:
             )
             return
         except Exception as oauth_error:
-            if not cfg["configured"]:
-                raise RuntimeError(f"Échec Gmail OAuth : {oauth_error}") from oauth_error
+            raise RuntimeError(f"Échec Gmail OAuth : {oauth_error}") from oauth_error
 
     if not cfg["configured"]:
         raise RuntimeError("Email non configuré : Gmail OAuth et SMTP sont indisponibles")
