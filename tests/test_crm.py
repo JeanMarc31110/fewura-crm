@@ -13,7 +13,8 @@ from fewura_crm.db import init_db, execute, one, rows
 from fewura_crm.prospect_engine import build_overpass_query, fingerprint
 import fewura_crm.prospect_engine as prospect_engine
 from fewura_crm.tools import _merge_prospect_from_fewura
-from fewura_crm.outreach import create_campaign, create_campaign_for_selection, run_campaign, process_due_campaigns, schedule_campaign, _send_email, APPROVED_EMAIL_BODY, APPROVED_SMS_BODY
+from fewura_crm.outreach import create_campaign, create_campaign_for_selection, run_campaign, process_due_campaigns, schedule_campaign, _send_email, save_smtp, APPROVED_EMAIL_BODY, APPROVED_SMS_BODY
+from fewura_crm.time_utils import local_input_to_utc_sql, utc_sql_to_local_display
 import fewura_crm.gmail_oauth as gmail_oauth
 from fewura_crm.web import app
 
@@ -203,3 +204,16 @@ def test_approved_email_and_sms_templates_are_selected_by_channel():
     assert email_log["body"] == APPROVED_EMAIL_BODY
     assert sms_log["body"] == APPROVED_SMS_BODY
     assert "https://innovatechsoftware.eu" in sms_log["body"]
+
+
+def test_smtp_standard_port_pairing_is_normalized():
+    save_smtp("smtp.example.test", 587, "user", "secret", "from@example.test", "FEWURA", "ssl")
+    assert one("SELECT value FROM settings WHERE key='smtp_port'")["value"] == "465"
+    save_smtp("smtp.example.test", 465, "user", "secret", "from@example.test", "FEWURA", "starttls")
+    assert one("SELECT value FROM settings WHERE key='smtp_port'")["value"] == "587"
+
+
+def test_campaign_schedule_round_trips_local_time_as_utc():
+    local_value = "2026-08-17T17:36"
+    stored = local_input_to_utc_sql(local_value)
+    assert utc_sql_to_local_display(stored).startswith("17/08/2026 17:36")
