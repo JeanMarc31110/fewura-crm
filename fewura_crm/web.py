@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import html
+from .time_utils import local_now, utc_sql_to_local_display
+from urllib.parse import quote
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 
 from .db import init_db, rows, one, execute, connect
-from .time_utils import utc_sql_to_local_display
 from .tools import prospect_search_import, crm_summary, export_prospects_csv
 from .outreach import (
     create_campaign, create_campaign_for_selection, schedule_campaign, run_campaign, retry_errors, outreach_summary,
@@ -13,7 +14,7 @@ from .outreach import (
     APPROVED_EMAIL_SUBJECT, APPROVED_EMAIL_BODY, APPROVED_SMS_BODY,
 )
 
-VERSION = "1.3.1"
+VERSION = "1.4.3"
 app = FastAPI(title="FEWURA CRM", version=VERSION)
 _shutdown_requested = False
 STATUSES = ["nouveau","a_contacter","contacte","qualifie","proposition","gagne","perdu","archive"]
@@ -22,8 +23,13 @@ CATEGORIES = ["all","restaurants","hotels","garages","immobilier","comptables","
 
 def esc(v): return html.escape(str(v or ""), quote=True)
 
-def display_timestamp(v):
-    return esc(utc_sql_to_local_display(v))
+def display_timestamp(v): return utc_sql_to_local_display(v)
+
+def friendly_error(exc: Exception) -> str:
+    text = str(exc)
+    if "database is locked" in text.lower() or "database table is locked" in text.lower():
+        return "La base clients est momentanément occupée. Patientez quelques secondes puis réessayez."
+    return text
 
 def layout(body: str, title: str = "FEWURA CRM") -> str:
     return f'''<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)}</title>
@@ -56,6 +62,7 @@ def dashboard():
 @app.get("/prospects", response_class=HTMLResponse)
 def prospects(q: str="", status: str=""):
     params=[]; where=[]
+    where.append("(coalesce(email,'')<>'' OR coalesce(phone,'')<>'')")
     if q:
         like=f"%{q}%"; where.append("(company_name LIKE ? OR contact_name LIKE ? OR email LIKE ? OR phone LIKE ? OR city LIKE ? OR category LIKE ?)"); params += [like]*6
     if status: where.append("status=?"); params.append(status)
@@ -108,7 +115,7 @@ def tasks_page():
 
 @app.get('/prospect',response_class=HTMLResponse)
 def prospect_page(message:str=""):
-    body=f'<section class="card"><h2>FEWURA PROSPECT</h2>{f"<div class=notice>{esc(message)}</div>" if message else ""}<form method="post" action="/prospect/search"><div class="row"><label>Zone<input name="zone" required placeholder="Toulouse"></label><label>Activité<select name="category">'+''.join(f'<option value="{c}">{c}</option>' for c in CATEGORIES)+'</select></label><label>Rayon km<input type="number" name="radius_km" value="20" min="1" max="50"></label><label>Maximum<input type="number" name="max_results" value="50" min="1" max="100"></label></div><label><input type="checkbox" name="enrich" value="1" checked> Enrichir sites, emails et téléphones</label><button class="btn success">Rechercher et importer dans le CRM</button></form></section>'
+    body=f'<section class="card"><h2>FEWURA PROSPECT</h2>{f"<div class=notice>{esc(message)}</div>" if message else ""}<div class="notice">Recherche élargie : entreprises privées uniquement, avec au moins un e-mail ou un téléphone. Les organismes publics sont exclus.</div><form method="post" action="/prospect/search"><div class="row"><label>Zone<input name="zone" required placeholder="Toulouse"></label><label>Activité<select name="category">'+''.join(f'<option value="{c}">{c}</option>' for c in CATEGORIES)+'</select></label><label>Rayon km<input type="number" name="radius_km" value="20" min="1" max="50"></label><label>Maximum<input type="number" name="max_results" value="50" min="1" max="200"></label></div><label><input type="checkbox" name="enrich" value="1" checked> Enrichir sites, emails et téléphones</label><button class="btn success">Rechercher et importer dans le CRM</button></form></section>'
     return layout(body,'FEWURA PROSPECT')
 @app.post('/prospect/search')
 def prospect_search(zone:str=Form(...),category:str=Form('all'),radius_km:int=Form(20),max_results:int=Form(50),enrich:str=Form("")):
@@ -118,55 +125,111 @@ def prospect_search(zone:str=Form(...),category:str=Form('all'),radius_km:int=Fo
     return RedirectResponse('/prospect?message='+__import__('urllib.parse').parse.quote(msg),303)
 
 @app.get('/campaigns',response_class=HTMLResponse)
-def campaigns_page():
-    data=rows("SELECT c.*,(SELECT count(*) FROM campaign_recipients r WHERE r.campaign_id=c.id) recipients,(SELECT count(*) FROM campaign_recipients r WHERE r.campaign_id=c.id AND r.status='sent') sent,(SELECT count(*) FROM campaign_recipients r WHERE r.campaign_id=c.id AND r.status='error') errors FROM campaigns c ORDER BY id DESC")
-    form='''<section class="card"><h2>Nouvelle campagne</h2><div class="notice"><b>Simulation</b> n'envoie rien. En mode réel : email si disponible, sinon SMS via le téléphone +33 7 73 54 78 57. Configurez SMTP/SMS dans Paramètres puis confirmez explicitement.</div><form method="post" action="/campaigns"><div class="row"><label>Nom<input name="name" required></label><label>Objet email<input name="subject" required value="Bonjour {entreprise}"></label><label>Activité<select name="category"><option value="">Toutes</option>'''+''.join(f'<option value="{c}">{c}</option>' for c in CATEGORIES if c!='all')+'''</select></label><label>Ville<input name="city"></label><label>Score minimum<input type="number" name="min_score" value="0" min="0" max="100"></label><label>Mode<select name="mode"><option value="simulation">Simulation</option><option value="reel">Réel</option></select></label><label>Programmer date/heure<input type="datetime-local" name="scheduled_at"></label></div><label>Message<textarea name="body" rows="8" required>Bonjour {contact},\n\nNous vous contactons au sujet de {entreprise} à {ville}.\n\nCordialement,\nFEWURA</textarea></label><label><input type="checkbox" name="confirm_real" value="OUI"> Je confirme que le mode réel peut envoyer des emails et SMS</label><button class="btn success">Créer la campagne</button></form></section>'''
-    table='<section class="card"><h2>Campagnes</h2><div class="table-wrap"><table><tr><th>Nom</th><th>Mode</th><th>Planifiée</th><th>État</th><th>Dest.</th><th>Envoyés</th><th>Erreurs</th><th>Actions</th></tr>'+''.join(f'''<tr><td>{esc(c['name'])}</td><td>{esc(c['mode'])}</td><td>{display_timestamp(c.get('scheduled_at'))}</td><td>{esc(c['status'])}</td><td>{c['recipients']}</td><td>{c['sent']}</td><td>{c['errors']}</td><td><form method="post" action="/campaigns/{c['id']}/run" style="display:inline"><input type="hidden" name="confirm_real" value="OUI"><button class="btn">Exécuter</button></form> <form method="post" action="/campaigns/{c['id']}/retry" style="display:inline"><button class="btn warn">Réessayer erreurs</button></form></td></tr>''' for c in data)+'</table></div></section>'
-    return layout(form+table,'Campagnes')
+def campaigns_page(message:str=""):
+    data=rows("SELECT c.*,(SELECT count(*) FROM campaign_recipients r WHERE r.campaign_id=c.id) recipients,(SELECT count(*) FROM campaign_recipients r WHERE r.campaign_id=c.id AND r.status='sent') sent,(SELECT count(*) FROM campaign_recipients r WHERE r.campaign_id=c.id AND r.status='simulated') simulated,(SELECT count(*) FROM campaign_recipients r WHERE r.campaign_id=c.id AND r.status='error') errors FROM campaigns c ORDER BY id DESC")
+    notice=f'<div class="notice">{esc(message)}</div>' if message else ''
+    form='''<section class="card"><h2>Nouvelle campagne</h2><div class="notice"><b>Modèles approuvés</b> : les contenus e-mail et SMS sont utilisés automatiquement. <b>Simulation</b> n'envoie rien. En mode réel : email si disponible, sinon SMS via le téléphone +33 7 73 54 78 57. Configurez SMTP/SMS dans Paramètres puis confirmez explicitement.</div><form method="post" action="/campaigns"><div class="row"><label>Nom<input name="name" required></label><label>Objet email<input name="subject" required value="Bonjour {entreprise}"></label><label>Activité<select name="category"><option value="">Toutes</option>'''+''.join(f'<option value="{c}">{c}</option>' for c in CATEGORIES if c!='all')+'''</select></label><label>Ville<input name="city"></label><label>Score minimum<input type="number" name="min_score" value="0" min="0" max="100"></label><label>Mode<select name="mode"><option value="simulation">Simulation</option><option value="reel">Réel</option></select></label><label>Programmer date/heure<input type="datetime-local" name="scheduled_at"></label></div><label><input type="checkbox" name="confirm_real" value="OUI"> Je confirme que le mode réel peut envoyer des emails et SMS</label><button class="btn success">Créer la campagne</button></form></section>'''
+    table='<section class="card"><h2>Campagnes</h2><div class="notice"><b>Simuler</b> prépare les messages sans les envoyer. <b>Envoyer réellement</b> transmet les messages par Gmail ou SMS après votre confirmation.</div><div class="table-wrap"><table><tr><th>Nom</th><th>Mode</th><th>Planifiée</th><th>État</th><th>Dest.</th><th>Simulés</th><th>Envoyés</th><th>Erreurs</th><th>Actions</th></tr>'+''.join(f'''<tr><td>{esc(c['name'])}</td><td>{esc(c['mode'])}</td><td>{display_timestamp(c.get('scheduled_at'))}</td><td>{esc(c['status'])}</td><td>{c['recipients']}</td><td>{c['simulated']}</td><td>{c['sent']}</td><td>{c['errors']}</td><td><form method="post" action="/campaigns/{c['id']}/run" style="display:inline"><input type="hidden" name="force_mode" value="simulation"><button class="btn">Simuler</button></form> <form method="post" action="/campaigns/{c['id']}/run" style="display:inline" onsubmit="return confirm('Envoyer réellement cette campagne maintenant ?');"><input type="hidden" name="force_mode" value="reel"><input type="hidden" name="confirm_real" value="OUI"><button class="btn success">Envoyer réellement</button></form> <form method="post" action="/campaigns/{c['id']}/retry" style="display:inline"><button class="btn warn">Réessayer erreurs</button></form></td></tr>''' for c in data)+'</table></div></section>'
+    return layout(notice+form+table,'Campagnes')
 
 @app.post('/campaigns/from-selection', response_class=HTMLResponse)
 def campaign_from_selection(ids:list[int]=Form(default=[])):
     ids = list(dict.fromkeys(int(pid) for pid in ids if int(pid) > 0))
+    ids = [pid for pid in ids if one("SELECT id FROM prospects WHERE id=? AND (coalesce(email,'')<>'' OR coalesce(phone,'')<>'')", (pid,))]
     if not ids:
-        return layout('<section class="card dangerbox"><h2>Aucun prospect sélectionné</h2><p>Sélectionnez au moins un prospect dans Contacts.</p></section>')
+        return layout('<section class="card dangerbox"><h2>Aucun prospect exploitable</h2><p>Les prospects doivent avoir au moins un e-mail ou un téléphone.</p></section>')
     hidden = ''.join(f'<input type="hidden" name="ids" value="{pid}">' for pid in ids)
-    body = f'''<section class="card"><h2>Nouvel envoi — {len(ids)} prospect(s) sélectionné(s)</h2>
-<div class="notice">Simulation par défaut : aucun message ne sera envoyé. Le mode réel exige une confirmation explicite et la configuration du canal.</div>
-<form method="post" action="/campaigns/from-selection/create">{hidden}
-<div class="row"><label>Nom<input name="name" required value="Envoi sélection"></label><label>Canal<select name="channel"><option value="auto">Automatique (email puis SMS)</option><option value="email">Email uniquement</option><option value="sms">SMS uniquement</option></select></label><label>Mode<select name="mode"><option value="simulation">Simulation</option><option value="reel">Réel</option></select></label><label>Programmer date/heure<input type="datetime-local" name="scheduled_at"></label></div>
+    body = f'''<section class="card"><h2>Envoi direct — {len(ids)} prospect(s) sélectionné(s)</h2>
+<div class="notice">Choisissez le canal puis envoyez directement. <b>Tester sans envoyer</b> crée uniquement un aperçu dans l’historique.</div>
+<form method="post" action="/campaigns/from-selection/send" onsubmit="if(event.submitter && event.submitter.value==='send' && !confirm('Envoyer réellement les messages aux prospects sélectionnés ?')) return false; const buttons=this.querySelectorAll('button'); setTimeout(()=>buttons.forEach(b=>b.disabled=true),0);">{hidden}
+<label>Canal<select name="channel"><option value="auto">Automatique (email puis SMS)</option><option value="email">Email uniquement</option><option value="sms">SMS uniquement</option></select></label>
 <label>Objet email<input name="subject" required value="{esc(APPROVED_EMAIL_SUBJECT)}"></label>
-<label>Message email<textarea name="body" rows="12" required>{esc(APPROVED_EMAIL_BODY)}</textarea></label>
-<label>Message SMS<textarea name="sms_body" rows="12" required>{esc(APPROVED_SMS_BODY)}</textarea></label>
-<label><input type="checkbox" name="confirm_real" value="OUI"> Je confirme que le mode réel peut envoyer les messages sélectionnés</label>
-<button class="btn success">Créer l’envoi</button> <a class="btn light" href="/prospects">Annuler</a></form></section>'''
+<div class="notice">Les modèles e-mail et SMS approuvés sont utilisés automatiquement selon le canal choisi.</div>
+<label><input type="checkbox" name="confirm_real" value="OUI"> Je confirme l’envoi réel aux prospects sélectionnés</label>
+<button class="btn secondary" type="submit" name="action" value="simulate">Tester sans envoyer</button> <button class="btn success" type="submit" name="action" value="send">Envoyer maintenant</button> <a class="btn light" href="/prospects">Annuler</a></form></section>'''
     return layout(body,'Envoi ciblé')
+
+@app.post('/campaigns/from-selection/send')
+def campaign_from_selection_send(
+    ids:list[int]=Form(default=[]), subject:str=Form(APPROVED_EMAIL_SUBJECT),
+    channel:str=Form('auto'), action:str=Form(''), confirm_real:str=Form('')
+):
+    if action not in {'simulate','send'}:
+        return layout('<section class="card dangerbox"><h2>Action invalide</h2><p>Aucun message n’a été envoyé.</p></section>')
+    if action == 'send' and confirm_real != 'OUI':
+        return layout('<section class="card dangerbox"><h2>Confirmation requise</h2><p>Aucun message n’a été envoyé. Cochez la confirmation avant l’envoi réel.</p><p><a class="btn light" href="/prospects">Retour aux contacts</a></p></section>')
+    mode = 'reel' if action == 'send' else 'simulation'
+    label = local_now().strftime('Envoi direct %d/%m/%Y %H:%M:%S')
+    try:
+        cid=create_campaign_for_selection(label, subject, APPROVED_EMAIL_BODY, ids, channel, mode, '', APPROVED_SMS_BODY)
+        result=run_campaign(cid, mode)
+        if mode == 'reel':
+            message=(f'Envoi direct terminé : {result["sent"]} envoyé(s), '
+                     f'{result["skipped"]} contact(s) sans coordonnée adaptée, '
+                     f'{result["errors"]} erreur(s).')
+        else:
+            message=(f'Test terminé sans envoi : {result["simulated"]} message(s) préparé(s), '
+                     f'{result["skipped"]} contact(s) sans coordonnée adaptée, '
+                     f'{result["errors"]} erreur(s).')
+    except Exception as exc:
+        message=f'Envoi impossible : {friendly_error(exc)}'
+    return RedirectResponse('/communications?message='+quote(message),303)
 
 @app.post('/campaigns/from-selection/create')
 def campaign_from_selection_create(
-    ids:list[int]=Form(default=[]), name:str=Form(...), subject:str=Form(APPROVED_EMAIL_SUBJECT), body:str=Form(APPROVED_EMAIL_BODY),
-    sms_body:str=Form(APPROVED_SMS_BODY), channel:str=Form('auto'), mode:str=Form('simulation'), scheduled_at:str=Form(''), confirm_real:str=Form('')
+    ids:list[int]=Form(default=[]), name:str=Form(...), subject:str=Form(APPROVED_EMAIL_SUBJECT),
+    channel:str=Form('auto'), mode:str=Form('simulation'), scheduled_at:str=Form(''), confirm_real:str=Form('')
 ):
     if mode == 'reel' and confirm_real != 'OUI':
         return layout('<section class="card dangerbox"><h2>Confirmation requise</h2><p>Le mode réel doit être confirmé.</p></section>')
-    create_campaign_for_selection(name, subject, body, ids, channel, mode, scheduled_at, sms_body)
-    return RedirectResponse('/campaigns',303)
+    try:
+        cid=create_campaign_for_selection(name, subject, APPROVED_EMAIL_BODY, ids, channel, mode, scheduled_at, APPROVED_SMS_BODY)
+        message=f'Campagne {cid} créée pour {len(set(ids))} prospect(s).'
+    except Exception as exc:
+        message=f'Création impossible : {friendly_error(exc)}'
+    return RedirectResponse('/campaigns?message='+quote(message),303)
 
 @app.post('/campaigns')
 def campaign_create(name:str=Form(...),subject:str=Form(APPROVED_EMAIL_SUBJECT),body:str=Form(APPROVED_EMAIL_BODY),category:str=Form(""),city:str=Form(""),min_score:int=Form(0),mode:str=Form('simulation'),scheduled_at:str=Form(""),confirm_real:str=Form("")):
     if mode=='reel' and confirm_real!='OUI': return layout('<section class="card dangerbox"><h2>Confirmation requise</h2><p>Le mode réel doit être confirmé.</p></section>')
-    create_campaign(name,subject,body,category,city,min_score,mode,scheduled_at,APPROVED_SMS_BODY); return RedirectResponse('/campaigns',303)
+    try:
+        cid=create_campaign(name,subject,body,category,city,min_score,mode,scheduled_at,APPROVED_SMS_BODY)
+        message=f'Campagne {cid} créée.'
+    except Exception as exc:
+        message=f'Création impossible : {friendly_error(exc)}'
+    return RedirectResponse('/campaigns?message='+quote(message),303)
 @app.post('/campaigns/{cid}/run')
-def campaign_run(cid:int,confirm_real:str=Form("")):
+def campaign_run(cid:int,force_mode:str=Form(""),confirm_real:str=Form("")):
     c=one("SELECT mode FROM campaigns WHERE id=?",(cid,))
-    if c and c['mode']=='reel' and confirm_real!='OUI': return layout('<section class="card dangerbox"><h2>Confirmation requise</h2></section>')
-    run_campaign(cid); return RedirectResponse('/campaigns',303)
+    if not c:
+        return RedirectResponse('/campaigns?message='+quote('Campagne introuvable.'),303)
+    if force_mode and force_mode not in {'simulation','reel'}:
+        return RedirectResponse('/campaigns?message='+quote('Mode d’exécution invalide.'),303)
+    effective_mode=force_mode or c['mode']
+    if effective_mode=='reel' and confirm_real!='OUI':
+        return layout('<section class="card dangerbox"><h2>Confirmation requise</h2><p>L’envoi réel n’a pas été lancé.</p></section>')
+    try:
+        result=run_campaign(cid,force_mode or None)
+        mode_label='réel' if result['mode']=='reel' else 'simulation'
+        message=(f'Campagne {cid} exécutée en mode {mode_label} : {result["sent"]} envoyé(s), '
+                 f'{result["simulated"]} simulé(s), {result["errors"]} erreur(s).')
+    except Exception as exc:
+        message=f'Exécution impossible : {exc}'
+    return RedirectResponse('/campaigns?message='+quote(message),303)
 @app.post('/campaigns/{cid}/retry')
-def campaign_retry(cid:int): retry_errors(cid); return RedirectResponse('/campaigns',303)
+def campaign_retry(cid:int):
+    try:
+        retry_errors(cid)
+        message=f'Les erreurs de la campagne {cid} sont prêtes à être réessayées.'
+    except Exception as exc:
+        message=f'Relance impossible : {exc}'
+    return RedirectResponse('/campaigns?message='+quote(message),303)
 
 @app.get('/communications',response_class=HTMLResponse)
-def communications_page():
+def communications_page(message:str=""):
     data=rows("SELECT c.*,p.company_name,ca.name campaign_name FROM communications c LEFT JOIN prospects p ON p.id=c.prospect_id LEFT JOIN campaigns ca ON ca.id=c.campaign_id ORDER BY c.id DESC LIMIT 1000")
-    body='<section class="card"><h2>Emails / SMS / historique des communications</h2><div class="table-wrap"><table><tr><th>Date</th><th>Prospect</th><th>Campagne</th><th>Canal</th><th>Statut</th><th>Destinataire</th><th>Objet</th><th>Erreur</th></tr>'+''.join(f'<tr><td>{display_timestamp(x["created_at"])}</td><td>{esc(x.get("company_name"))}</td><td>{esc(x.get("campaign_name"))}</td><td>{esc(x["channel"])}</td><td>{esc(x["status"])}</td><td>{esc(x.get("recipient"))}</td><td>{esc(x.get("subject"))}</td><td>{esc(x.get("error"))}</td></tr>' for x in data)+'</table></div></section>'
+    notice=f'<div class="notice">{esc(message)}</div>' if message else ''
+    body=notice+'<section class="card"><h2>Emails / SMS / historique des communications</h2><div class="table-wrap"><table><tr><th>Date</th><th>Prospect</th><th>Campagne</th><th>Canal</th><th>Statut</th><th>Destinataire</th><th>Objet</th><th>Erreur</th></tr>'+''.join(f'<tr><td>{display_timestamp(x["created_at"])}</td><td>{esc(x.get("company_name"))}</td><td>{esc(x.get("campaign_name"))}</td><td>{esc(x["channel"])}</td><td>{esc(x["status"])}</td><td>{esc(x.get("recipient"))}</td><td>{esc(x.get("subject"))}</td><td>{esc(x.get("error"))}</td></tr>' for x in data)+'</table></div></section>'
     return layout(body,'Historique')
 
 @app.get('/settings',response_class=HTMLResponse)
@@ -204,3 +267,4 @@ def export_csv():
 def shutdown():
     global _shutdown_requested; _shutdown_requested=True; return JSONResponse({'ok':True})
 def shutdown_requested()->bool: return _shutdown_requested
+

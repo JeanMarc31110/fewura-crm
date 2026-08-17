@@ -164,3 +164,4 @@ def send_email(to: str, subject: str, body: str, from_email: str, from_name: str
         detail = exc.read().decode("utf-8", errors="replace")[:300]
         raise RuntimeError(f"Envoi Gmail HTTP {exc.code}: {detail}") from exc
     return {"ok": True, "id": data.get("id", "")}
+
