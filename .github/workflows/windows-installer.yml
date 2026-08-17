@@ -1,5 +1,8 @@
 name: Build Windows installer (PyInstaller)
 
+permissions:
+  contents: write
+
 on:
   push:
     branches: [ 'windows-installer' ]
@@ -12,6 +15,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Show environment
+        run: |
+          python --version
+          pip --version
+          pip list --format=columns
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -27,12 +36,30 @@ jobs:
         run: |
           pyinstaller --noconfirm --clean --onefile agent.py
 
+      - name: Upload build logs and artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyinstaller-logs-${{ github.sha }}
+          path: |
+            build/**/*.txt
+            build/**/*.log
+            build/**/warn-*.txt
+            build/**/warn-*.log
+            build/**/xref-*.html
+            dist/agent.exe
+
       - name: Package artifact
         shell: pwsh
         run: |
           $dest = "fewura-crm-windows-${{ github.sha }}.zip"
           Compress-Archive -Path .\dist\agent.exe -DestinationPath $dest -Force
           Write-Output "Zipped to $dest"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fewura-crm-windows-${{ github.sha }}.zip
+          path: fewura-crm-windows-${{ github.sha }}.zip
 
       - name: Create GitHub Release
         id: create_release
