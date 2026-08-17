@@ -11,6 +11,9 @@ on:
 jobs:
   build-windows-installer:
     runs-on: windows-latest
+    env:
+      WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+      WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -63,6 +66,26 @@ jobs:
           & $iscc "installer\FEWURA_CRM_Installer.iss"
           Get-ChildItem .\release -Force | Select-Object FullName, Length
 
+      - name: Sign installer if certificate is configured
+        if: ${{ env.WINDOWS_SIGNING_CERT_BASE64 != '' && env.WINDOWS_SIGNING_CERT_PASSWORD != '' }}
+        shell: pwsh
+        run: |
+          $certPath = Join-Path $env:RUNNER_TEMP 'fewura-signing-cert.pfx'
+          $encoded = $env:WINDOWS_SIGNING_CERT_BASE64
+          [System.IO.File]::WriteAllBytes($certPath, [System.Convert]::FromBase64String($encoded))
+
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match 'x64\\signtool.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+
+          if (-not $signtool) {
+            throw "signtool.exe not found in Windows SDK install."
+          }
+
+          & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td sha256 /f $certPath /p $env:WINDOWS_SIGNING_CERT_PASSWORD /v "release\FEWURA_CRM_Setup.exe"
+          & $signtool.FullName verify /pa /v "release\FEWURA_CRM_Setup.exe"
+
       - name: Package zip fallback
         shell: pwsh
         run: |
@@ -83,7 +106,7 @@ jobs:
         with:
           tag: installer-${{ github.sha }}
           name: "Windows installer ${{ github.sha }}"
-          body: "Automated Windows installer (PyInstaller + Inno Setup) built by CI. Install using the EXE installer, or use the ZIP fallback if needed."
+          body: "Automated Windows installer (PyInstaller + Inno Setup) built by CI. If a signing certificate is configured, the installer is code-signed. Otherwise it is unsigned but still usable for internal testing."
           files: |
             fewura-crm-windows-${{ github.sha }}.zip
             release/FEWURA_CRM_Setup.exe

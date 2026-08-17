@@ -48,6 +48,15 @@ Le dépôt publie désormais un installateur EXE Windows professionnel :
 - `FEWURA_CRM_Setup.exe /SILENT /NORESTART`
 - ou via le script PowerShell : `install-client-pro.ps1`
 
+### Signature de code (production)
+
+Pour un EXE réellement signé et acceptable par les politiques de sécurité d’entreprise, ajouter dans les secrets GitHub :
+
+- `WINDOWS_SIGNING_CERT_BASE64` : certificat .pfx encodé en base64
+- `WINDOWS_SIGNING_CERT_PASSWORD` : mot de passe du certificat
+
+Le workflow signera automatiquement le binaire `FEWURA_CRM_Setup.exe` si ces secrets sont présents. Sans eux, l’installateur est construit mais reste non signé (utile pour tests internes uniquement).
+
 ## Développement
 1. Copier `.env.example` vers `.env` et renseigner `OPENAI_API_KEY`.
 2. `install.bat`
