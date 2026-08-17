@@ -16,6 +16,7 @@ from fewura_crm.db import init_db
 from fewura_crm.legacy_config import migrate_legacy_smtp_settings
 from fewura_crm.paths import data_dir
 from fewura_crm.web import app, shutdown_requested, VERSION
+from fewura_crm.updater import maybe_update
 
 HOST = os.environ.get("FEWURA_CRM_HOST", "127.0.0.1")
 BASE_PORT = int(os.environ.get("FEWURA_CRM_PORT", "8020"))
@@ -120,6 +121,8 @@ def self_test() -> int:
 
 def main() -> int:
     try:
+        if maybe_update(VERSION):
+            return 0
         init_db()
         migration = migrate_legacy_smtp_settings()
         if migration.get("migrated"):
