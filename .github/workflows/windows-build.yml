@@ -43,7 +43,7 @@ jobs:
 
       - name: Smoke-test frozen EXE
         shell: pwsh
-        run: .\TESTER_EXE_WINDOWS.ps1 -ExePath '.\dist\FEWURA_CRM\FEWURA_CRM.exe'
+        run: .\TESTER_EXE_WINDOWS.ps1 -ExePath '.\dist\FEWURA_CRM.exe'
 
       - name: Install Inno Setup
         shell: pwsh
