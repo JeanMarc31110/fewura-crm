@@ -631,3 +631,30 @@ def test_approved_email_and_sms_templates_are_selected_by_channel():
     assert sms_log["body"] == APPROVED_SMS_BODY
     assert "https://innovatechsoftware.eu" in sms_log["body"]
 
+
+
+def test_prospect_contact_mode_filters_email_and_phone(monkeypatch):
+    monkeypatch.setattr(prospect_engine, "geocode", lambda zone: {"lat": 43.6, "lon": 1.4})
+    monkeypatch.setattr(
+        prospect_engine,
+        "_fetch_overpass",
+        lambda query: {"elements": [
+            {"type": "node", "id": 1, "lat": 43.6, "lon": 1.4, "tags": {"name": "Email et téléphone", "office": "transport", "email": "contact@both.test", "phone": "0611223344"}},
+            {"type": "node", "id": 2, "lat": 43.6, "lon": 1.4, "tags": {"name": "Email seul", "office": "transport", "email": "contact@email.test"}},
+            {"type": "node", "id": 3, "lat": 43.6, "lon": 1.4, "tags": {"name": "Téléphone seul", "office": "transport", "phone": "0611225566"}},
+        ]},
+    )
+    assert [p["company_name"] for p in prospect_engine.search_businesses("Toulouse", "transport", 20, 50, enrich=False, contact_mode="email")] == ["Email et téléphone", "Email seul"]
+    assert [p["company_name"] for p in prospect_engine.search_businesses("Toulouse", "transport", 20, 50, enrich=False, contact_mode="phone")] == ["Email et téléphone", "Téléphone seul"]
+    assert len(prospect_engine.search_businesses("Toulouse", "transport", 20, 50, enrich=False, contact_mode="either")) == 3
+
+
+def test_prospect_page_exposes_contact_modes_and_expanded_activity_choices():
+    with TestClient(app) as client:
+        page = client.get("/prospect")
+        assert page.status_code == 200
+        assert "Email ou téléphone" in page.text
+        assert "Email uniquement" in page.text
+        assert "Téléphone uniquement" in page.text
+        assert "Santé" in page.text
+        assert "Événementiel" in page.text
