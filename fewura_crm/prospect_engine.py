@@ -362,11 +362,11 @@ def contact_matches_mode(prospect: dict, contact_mode: str = "either") -> bool:
     return (has_email or has_phone) if mode == "either" else (has_email if mode == "email" else has_phone)
 
 
-def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either") -> list[dict]:
+def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either", legal_form: str = "all") -> list[dict]:
     # SIRENE/INSEE is the primary source. OSM remains a fallback when the API
     # is not configured, unavailable, or returns no establishment.
     try:
-        registry = search_sirene(zone, category, max_results)
+        registry = search_sirene(zone, category, max_results, legal_form)
     except SireneUnavailable:
         registry = []
     if registry:
