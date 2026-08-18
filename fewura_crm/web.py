@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSON
 
 from .db import init_db, rows, one, execute, connect
 from .tools import prospect_search_import, crm_summary, export_prospects_csv
+from .sirene import LEGAL_FORM_LABELS
 from .outreach import (
     create_campaign, create_campaign_for_selection, schedule_campaign, run_campaign, retry_errors, outreach_summary,
     smtp_status, sms_status, save_smtp, save_sms, test_sms_gateway, start_scheduler, gmail_status, test_gmail_connection,
@@ -116,12 +117,12 @@ def tasks_page():
 
 @app.get('/prospect',response_class=HTMLResponse)
 def prospect_page(message:str=""):
-    body=f'<section class="card"><h2>FEWURA PROSPECT</h2>{f"<div class=notice>{esc(message)}</div>" if message else ""}<div class="notice">Recherche élargie : entreprises privées uniquement, avec au moins un e-mail ou un téléphone. Les organismes publics sont exclus.</div><form method="post" action="/prospect/search"><div class="row"><label>Zone<input name="zone" required placeholder="Toulouse"></label><label>Activité<select name="category">'+''.join(f'<option value="{c}">{CATEGORY_LABELS.get(c,c)}</option>' for c in CATEGORIES)+'</select></label><label>Rayon km<input type="number" name="radius_km" value="20" min="1" max="50"></label><label>Maximum<input type="number" name="max_results" value="50" min="1" max="200"></label></div><label>Coordonnées recherchées<select name="contact_mode"><option value="either">Email ou téléphone</option><option value="email">Email uniquement</option><option value="phone">Téléphone uniquement</option></select></label><label><input type="checkbox" name="enrich" value="1" checked> Enrichir sites, emails et téléphones</label><button class="btn success">Rechercher et importer dans le CRM</button></form></section>'
+    body=f'<section class="card"><h2>FEWURA PROSPECT</h2>{f"<div class=notice>{esc(message)}</div>" if message else ""}<div class="notice">Recherche élargie : entreprises privées uniquement, avec au moins un e-mail ou un téléphone. Les organismes publics sont exclus.</div><form method="post" action="/prospect/search"><div class="row"><label>Zone<input name="zone" required placeholder="Toulouse"></label><label>Activité<select name="category">'+''.join(f'<option value="{c}">{CATEGORY_LABELS.get(c,c)}</option>' for c in CATEGORIES)+'</select></label><label>Rayon km<input type="number" name="radius_km" value="20" min="1" max="50"></label><label>Maximum<input type="number" name="max_results" value="50" min="1" max="200"></label></div><label>Coordonnées recherchées<select name="contact_mode"><option value="either">Email ou téléphone</option><option value="email">Email uniquement</option><option value="phone">Téléphone uniquement</option></select></label><label>Forme juridique<select name="legal_form">'+''.join(f'<option value="{f}">{LEGAL_FORM_LABELS[f]}</option>' for f in LEGAL_FORM_LABELS)+'</select></label><label><input type="checkbox" name="enrich" value="1" checked> Enrichir sites, emails et téléphones</label><button class="btn success">Rechercher et importer dans le CRM</button></form></section>'
     return layout(body,'FEWURA PROSPECT')
 @app.post('/prospect/search')
-def prospect_search(zone:str=Form(...),category:str=Form('all'),radius_km:int=Form(20),max_results:int=Form(50),enrich:str=Form(""),contact_mode:str=Form("either")):
+def prospect_search(zone:str=Form(...),category:str=Form('all'),radius_km:int=Form(20),max_results:int=Form(50),enrich:str=Form(""),contact_mode:str=Form("either"),legal_form:str=Form("all")):
     try:
-        r=prospect_search_import(zone,category,radius_km,max_results,enrich=='1',contact_mode=contact_mode); msg=f'{r["found"]} trouvés — {r["created"]} créés — {r["updated"]} mis à jour'
+        r=prospect_search_import(zone,category,radius_km,max_results,enrich=='1',contact_mode=contact_mode,legal_form=legal_form); msg=f'{r["found"]} trouvés — {r["created"]} créés — {r["updated"]} mis à jour'
     except Exception as e: msg=f'Erreur : {e}'
     return RedirectResponse('/prospect?message='+__import__('urllib.parse').parse.quote(msg),303)
 
