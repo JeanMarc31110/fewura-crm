@@ -67,7 +67,7 @@ jobs:
           if (-not $iscc) { throw 'ISCC.exe introuvable.' }
           & $iscc '.\installer\FEWURA_CRM.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup a retourne le code $LASTEXITCODE" }
-          if (-not (Test-Path '.\installer\output\FEWURA_CRM_Setup_SMS_ONLY_1.4.3.exe')) { throw 'Setup SMS-only attendu non cree.' }
+          if (-not (Test-Path '.\installer\output\FEWURA_CRM_Setup_SMS_ONLY_1.4.4.exe')) { throw 'Setup SMS-only attendu non cree.' }
 
       - name: Prepare legacy install and stale shortcut collision
         shell: pwsh
@@ -92,7 +92,7 @@ jobs:
       - name: Install final Setup silently
         shell: pwsh
         run: |
-          $setup = (Resolve-Path '.\installer\output\FEWURA_CRM_Setup_SMS_ONLY_1.4.3.exe').Path
+          $setup = (Resolve-Path '.\installer\output\FEWURA_CRM_Setup_SMS_ONLY_1.4.4.exe').Path
           $installDir = Join-Path $env:RUNNER_TEMP 'FEWURA-CRM-installed'
           if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
           $args = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$installDir")
@@ -132,8 +132,8 @@ jobs:
       - name: Upload fully tested Windows Setup
         uses: actions/upload-artifact@v4
         with:
-          name: FEWURA-CRM-Windows-SMS-ONLY-1.4.3-TESTED
-          path: installer/output/FEWURA_CRM_Setup_SMS_ONLY_1.4.3.exe
+          name: FEWURA-CRM-Windows-SMS-ONLY-1.4.4-TESTED
+          path: installer/output/FEWURA_CRM_Setup_SMS_ONLY_1.4.4.exe
           if-no-files-found: error
 
       - name: Publish tagged release
@@ -142,4 +142,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" ".\\installer\\output\\FEWURA_CRM_Setup_SMS_ONLY_1.4.3.exe" --title "FEWURA CRM ${{ github.ref_name }}" --generate-notes
+          gh release create "${{ github.ref_name }}" ".\\installer\\output\\FEWURA_CRM_Setup_SMS_ONLY_1.4.4.exe" --title "FEWURA CRM ${{ github.ref_name }}" --generate-notes
