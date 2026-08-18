@@ -8,7 +8,7 @@ import httpx
 from .db import init_db, one
 
 
-SIRENE_ENDPOINT = "https://api.insee.fr/entreprises/sirene/V3.11/siret"
+SIRENE_ENDPOINT = "https://api.insee.fr/api-sirene/3.11/siret"
 
 
 class SireneUnavailable(RuntimeError):
