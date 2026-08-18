@@ -22,7 +22,7 @@ def _merge_prospect_from_fewura(p: dict) -> tuple[int, bool]:
             "SELECT * FROM prospects WHERE lower(trim(company_name))=lower(trim(?)) AND lower(trim(coalesce(city,'')))=lower(trim(?)) ORDER BY id LIMIT 1",
             (p.get("company_name") or "", p.get("city") or ""),
         ).fetchone()
-    fields = ["company_name", "email", "phone", "website", "city", "category", "lead_score", "address", "postal_code", "region", "country", "lat", "lon", "contact_form_url", "source_url", "source_type", "confidence", "fingerprint"]
+    fields = ["company_name", "email", "phone", "website", "city", "category", "lead_score", "address", "postal_code", "region", "country", "lat", "lon", "contact_form_url", "source_url", "source_type", "confidence", "fingerprint", "siren", "siret", "activity_code"]
     if old:
         old = dict(old)
         values = []
