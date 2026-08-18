@@ -249,7 +249,7 @@ def settings_page(message:str=""):
 @app.post('/settings/sirene')
 def settings_sirene(api_key:str=Form("")):
     init_db()
-    execute("INSERT INTO settings(key,value) VALUES('sirene_api_key,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (api_key.strip(),))
+    execute("INSERT INTO settings(key,value) VALUES('sirene_api_key',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (api_key.strip(),))
     return RedirectResponse('/settings',303)
 @app.post('/settings/smtp')
 def settings_smtp(host:str=Form(""),port:int=Form(587),username:str=Form(""),password:str=Form(""),from_email:str=Form(""),from_name:str=Form("FEWURA CRM"),security:str=Form("starttls")): save_smtp(host,port,username,password,from_email,from_name,security); return RedirectResponse('/settings',303)
