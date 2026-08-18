@@ -10,6 +10,27 @@ from .db import init_db, one
 
 SIRENE_ENDPOINT = "https://api.insee.fr/api-sirene/3.11/siret"
 
+LEGAL_FORM_LABELS = {
+    "all": "Toutes les formes juridiques",
+    "ei": "Entrepreneur individuel / micro-entreprise",
+    "sarl": "SARL / EURL",
+    "sas": "SAS",
+    "sasu": "SASU",
+    "sa": "SA",
+    "sci": "SCI",
+    "association": "Association",
+}
+LEGAL_FORM_CODES = {
+    "ei": ("1000",),
+    "sarl": ("5499", "5498"),
+    "sas": ("5710",),
+    "sasu": ("5720",),
+    "sa": ("5510", "5520", "5599", "5610", "5620", "5699"),
+    "sci": ("6540", "6541"),
+    "association": ("9210", "9220", "9230", "9240", "9260", "9300"),
+}
+
+
 
 class SireneUnavailable(RuntimeError):
     """The official SIRENE registry could not be queried."""
@@ -36,11 +57,12 @@ def _first(mapping: dict, *keys):
     return None
 
 
-def _flatten_establishment(item: dict, category: str, zone: str) -> dict | None:
+def _flatten_establishment(item: dict, category: str, zone: str, legal_form: str = "all") -> dict | None:
     address = item.get("adresseEtablissement") or {}
     legal = item.get("uniteLegale") or {}
     periods = item.get("periodesEtablissement") or []
     period = periods[0] if periods else {}
+    legal_form_code = _first(legal, "categorieJuridiqueUniteLegale") or _first(period, "categorieJuridiqueUniteLegale")
     name = _first(
         legal,
         "denominationUniteLegale",
@@ -79,16 +101,23 @@ def _flatten_establishment(item: dict, category: str, zone: str) -> dict | None:
         "source_url": f"https://annuaire-entreprises.data.gouv.fr/etablissement/{siret}",
         "source_type": "SIRENE / INSEE",
         "activity_code": _first(period, "activitePrincipaleEtablissement"),
+        "legal_form_code": legal_form_code,
+        "legal_form": legal_form,
         "contact_form_url": None,
     }
 
 
-def search_sirene(zone: str, category: str = "all", max_results: int = 50) -> list[dict]:
+def search_sirene(zone: str, category: str = "all", max_results: int = 50, legal_form: str = "all") -> list[dict]:
     """Search active establishments in SIRENE before any OSM/web fallback."""
     key = _api_key()
     if not key:
         return []
+    if legal_form not in LEGAL_FORM_LABELS:
+        raise ValueError(f"legal_form invalide: {legal_form}")
     query = f'etatAdministratifEtablissement:A AND libelleCommuneEtablissement:"{_escape_query(zone)}"'
+    codes = LEGAL_FORM_CODES.get(legal_form, ())
+    if codes:
+        query += " AND categorieJuridiqueUniteLegale:(" + " OR ".join(codes) + ")"
     headers = {
         "Accept": "application/json",
         "X-INSEE-Api-Key-Integration": key,
@@ -108,7 +137,7 @@ def search_sirene(zone: str, category: str = "all", max_results: int = 50) -> li
         raise SireneUnavailable(f"SIRENE indisponible : {exc}") from exc
     results = []
     for item in payload.get("etablissements", []):
-        prospect = _flatten_establishment(item, category, zone)
+        prospect = _flatten_establishment(item, category, zone, legal_form)
         if prospect:
             results.append(prospect)
     return results
