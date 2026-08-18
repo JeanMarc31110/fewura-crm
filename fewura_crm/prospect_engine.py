@@ -7,6 +7,7 @@ import re
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from .sirene import SireneUnavailable, search_sirene
 from bs4 import BeautifulSoup
 
 try:
@@ -362,6 +363,34 @@ def contact_matches_mode(prospect: dict, contact_mode: str = "either") -> bool:
 
 
 def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either") -> list[dict]:
+    # SIRENE/INSEE is the primary source. OSM remains a fallback when the API
+    # is not configured, unavailable, or returns no establishment.
+    try:
+        registry = search_sirene(zone, category, max_results)
+    except SireneUnavailable:
+        registry = []
+    if registry:
+        output = []
+        for prospect in registry:
+            if enrich and not prospect.get("website"):
+                prospect["website"] = discover_official_website(prospect["company_name"], prospect["city"])
+            if enrich and prospect.get("website") and not prospect.get("email"):
+                contacts = extract_public_contacts(prospect["website"])
+                prospect["email"] = contacts.get("email")
+                prospect["contact_form_url"] = contacts.get("contact_form_url")
+                prospect["phone"] = prospect.get("phone") or contacts.get("phone")
+            if prospect.get("email"):
+                prospect["email"] = normalize_email(prospect["email"])
+                if not is_public_business_email(prospect["email"], prospect.get("website")):
+                    prospect["email"] = None
+            if not contact_matches_mode(prospect, contact_mode):
+                continue
+            prospect["lead_score"] = lead_score(prospect)
+            prospect["confidence"] = round(prospect["lead_score"] / 100, 2)
+            prospect["fingerprint"] = fingerprint(prospect)
+            output.append(prospect)
+        return output
+
     geo = geocode(zone)
     radius = max(1000, min(int(radius_km) * 1000, 50000))
     limit = max(1, min(int(max_results), 200))
