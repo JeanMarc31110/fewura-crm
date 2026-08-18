@@ -1,5 +1,5 @@
 #define MyAppName "FEWURA CRM"
-#define MyAppVersion "1.4.3"
+#define MyAppVersion "1.4.4"
 #define MyAppPublisher "FEWURA"
 #define MyAppExeName "FEWURA_CRM.exe"
 
@@ -11,7 +11,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\FEWURA\CRM
 DefaultGroupName=FEWURA\CRM
 OutputDir=output
-OutputBaseFilename=FEWURA_CRM_Setup_SMS_ONLY_1.4.3
+OutputBaseFilename=FEWURA_CRM_Setup_SMS_ONLY_1.4.4
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
