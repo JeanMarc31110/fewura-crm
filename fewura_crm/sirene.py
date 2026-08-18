@@ -25,7 +25,7 @@ def _api_key() -> str:
 
 
 def _escape_query(value: str) -> str:
-    return value.replace("\\", " ").replace('"', " ').strip()
+    return value.replace("\\", " ").replace('"', " ").strip()
 
 
 def _first(mapping: dict, *keys):
