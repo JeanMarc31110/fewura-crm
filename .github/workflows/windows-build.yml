@@ -33,7 +33,7 @@ jobs:
         shell: pwsh
         run: |
           $env:FEWURA_CRM_DATA_DIR = Join-Path $env:RUNNER_TEMP 'fewura-crm-core'
-          python -m py_compile agent.py fewura_crm/__init__.py fewura_crm/paths.py fewura_crm/db.py fewura_crm/tools.py fewura_crm/prospect_engine.py fewura_crm/outreach.py fewura_crm/web.py
+          python -m py_compile agent.py fewura_crm/__init__.py fewura_crm/paths.py fewura_crm/db.py fewura_crm/tools.py fewura_crm/prospect_engine.py fewura_crm/sirene.py fewura_crm/outreach.py fewura_crm/web.py
           python -m pytest -q
           python agent.py --self-test
 
