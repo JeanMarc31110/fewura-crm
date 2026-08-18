@@ -35,6 +35,18 @@ CATEGORIES = {
         "craft": ["transportation"],
         "industrial": ["logistics"],
     },
+    "commerce": {"shop": ["supermarket", "convenience", "department_store", "clothes", "bakery", "butcher", "furniture"]},
+    "artisanat": {"craft": ["carpenter", "plumber", "electrician", "painter", "photographer", "shoemaker"]},
+    "sante": {"amenity": ["doctors", "dentist", "clinic", "pharmacy", "veterinary"]},
+    "beauté": {"shop": ["beauty", "cosmetics"], "amenity": ["spa"]},
+    "formation": {"amenity": ["school", "college", "language_school"]},
+    "conseil": {"office": ["consulting", "business_consulting", "financial"]},
+    "agence_immobiliere": {"office": ["estate_agent"]},
+    "automobile": {"shop": ["car", "car_parts", "tyres"]},
+    "logistique": {"office": ["logistics", "courier", "freight_forwarder"]},
+    "nettoyage": {"office": ["cleaning"], "craft": ["cleaning"]},
+    "securite": {"office": ["security"]},
+    "evenementiel": {"office": ["event_management"]},
 }
 
 PUBLIC_OWNERSHIP_VALUES = {
@@ -339,7 +351,17 @@ def is_private_business(name: str, tags: dict) -> bool:
     return not any(marker in normalized_name for marker in PUBLIC_NAME_MARKERS)
 
 
-def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True) -> list[dict]:
+def contact_matches_mode(prospect: dict, contact_mode: str = "either") -> bool:
+    """Check the selected contact requirement before importing a prospect."""
+    mode = (contact_mode or "either").strip().lower()
+    if mode not in {"either", "email", "phone"}:
+        raise ValueError("contact_mode doit être either, email ou phone")
+    has_email = bool(str(prospect.get("email") or "").strip())
+    has_phone = bool(str(prospect.get("phone") or "").strip())
+    return (has_email or has_phone) if mode == "either" else (has_email if mode == "email" else has_phone)
+
+
+def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either") -> list[dict]:
     geo = geocode(zone)
     radius = max(1000, min(int(radius_km) * 1000, 50000))
     limit = max(1, min(int(max_results), 200))
@@ -356,8 +378,6 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
     output = []
     seen = set()
     for element in data.get("elements", []):
-        if len(output) >= limit:
-            break
         tags = element.get("tags", {})
         center = element.get("center", {})
         name = tags.get("name") or tags.get("brand") or tags.get("operator")
@@ -398,11 +418,13 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
             if not is_public_business_email(prospect["email"], prospect.get("website")):
                 prospect["email"] = None
         # A result without any usable contact channel cannot be actioned.
-        if not (str(prospect.get("email") or "").strip() or str(prospect.get("phone") or "").strip()):
+        if not contact_matches_mode(prospect, contact_mode):
             continue
         prospect["lead_score"] = lead_score(prospect)
         prospect["confidence"] = round(prospect["lead_score"] / 100, 2)
         prospect["fingerprint"] = fingerprint(prospect)
         output.append(prospect)
+        if len(output) >= limit:
+            break
     return output
 
