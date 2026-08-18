@@ -45,7 +45,7 @@ Type: files; Name: "{userdesktop}\FEWURA_CRM.exe"
 Type: files; Name: "{commondesktop}\FEWURA_CRM.exe"
 
 [Files]
-Source: "..\dist\FEWURA_CRM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\FEWURA_CRM.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\FEWURA CRM"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
