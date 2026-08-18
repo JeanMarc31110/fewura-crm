@@ -22,7 +22,7 @@ def _merge_prospect_from_fewura(p: dict) -> tuple[int, bool]:
             "SELECT * FROM prospects WHERE lower(trim(company_name))=lower(trim(?)) AND lower(trim(coalesce(city,'')))=lower(trim(?)) ORDER BY id LIMIT 1",
             (p.get("company_name") or "", p.get("city") or ""),
         ).fetchone()
-    fields = ["company_name", "email", "phone", "website", "city", "category", "lead_score", "address", "postal_code", "region", "country", "lat", "lon", "contact_form_url", "source_url", "source_type", "confidence", "fingerprint", "siren", "siret", "activity_code"]
+    fields = ["company_name", "email", "phone", "website", "city", "category", "lead_score", "address", "postal_code", "region", "country", "lat", "lon", "contact_form_url", "source_url", "source_type", "confidence", "fingerprint", "siren", "siret", "activity_code", "legal_form", "legal_form_code"]
     if old:
         old = dict(old)
         values = []
@@ -44,13 +44,13 @@ def _merge_prospect_from_fewura(p: dict) -> tuple[int, bool]:
 
 
 @function_tool
-def prospect_search_import(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either") -> dict:
-    found = search_businesses(zone, category, radius_km, max_results, enrich=enrich, contact_mode=contact_mode)
+def prospect_search_import(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either", legal_form: str = "all") -> dict:
+    found = search_businesses(zone, category, radius_km, max_results, enrich=enrich, contact_mode=contact_mode, legal_form=legal_form)
     created = updated = 0; ids = []
     for prospect in found:
         pid, is_created = _merge_prospect_from_fewura(prospect)
         ids.append(pid); created += int(is_created); updated += int(not is_created)
-    return {"ok": True, "engine": "FEWURA PROSPECT", "zone": zone, "category": category, "found": len(found), "created": created, "updated": updated, "prospect_ids": ids}
+    return {"ok": True, "engine": "FEWURA PROSPECT", "zone": zone, "category": category, "legal_form": legal_form, "found": len(found), "created": created, "updated": updated, "prospect_ids": ids}
 
 
 @function_tool
