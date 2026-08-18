@@ -20,5 +20,17 @@ a = Analysis(
     noarchive=False,
 )
 pyz = PYZ(a.pure)
-exe = EXE(pyz,a.scripts,[],exclude_binaries=True,name="FEWURA_CRM",debug=False,bootloader_ignore_signals=False,strip=False,upx=True,console=False)
-coll = COLLECT(exe,a.binaries,a.datas,strip=False,upx=True,upx_exclude=[],name="FEWURA_CRM")
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    exclude_binaries=False,
+    name="FEWURA_CRM",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=False,
+)
