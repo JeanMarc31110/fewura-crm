@@ -262,7 +262,7 @@ def test_due_scheduler_executes_simulation():
 def test_management_web_interface_contains_outreach_sections():
     init_db()
     with TestClient(app) as client:
-        assert client.get("/health").json()["version"] == "1.4.3"
+        assert client.get("/health").json()["version"] == "1.4.4"
         home = client.get("/").text
         assert "Campagnes" in home and "Emails / SMS / historique" in home
         campaigns = client.get("/campaigns").text
