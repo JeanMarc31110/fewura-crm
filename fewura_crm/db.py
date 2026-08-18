@@ -134,6 +134,7 @@ def init_db() -> None:
                 ("contact_form_url", "TEXT"), ("source_url", "TEXT"), ("source_type", "TEXT"),
                 ("confidence", "REAL DEFAULT 0"), ("fingerprint", "TEXT"),
                 ("last_checked_at", "TEXT"), ("siren", "TEXT"), ("siret", "TEXT"), ("activity_code", "TEXT"),
+                ("legal_form", "TEXT"), ("legal_form_code", "TEXT"),
             ]:
                 _ensure_column(con, "prospects", column, definition)
             con.execute("CREATE INDEX IF NOT EXISTS idx_prospects_fingerprint ON prospects(fingerprint)")
