@@ -44,8 +44,8 @@ def _merge_prospect_from_fewura(p: dict) -> tuple[int, bool]:
 
 
 @function_tool
-def prospect_search_import(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True) -> dict:
-    found = search_businesses(zone, category, radius_km, max_results, enrich=enrich)
+def prospect_search_import(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either") -> dict:
+    found = search_businesses(zone, category, radius_km, max_results, enrich=enrich, contact_mode=contact_mode)
     created = updated = 0; ids = []
     for prospect in found:
         pid, is_created = _merge_prospect_from_fewura(prospect)
