@@ -53,6 +53,7 @@ def prospect_search_import(zone: str, category: str = "all", radius_km: int = 20
     run = one("SELECT * FROM prospect_search_runs WHERE search_key=?", (search_key,))
     start = int(run["next_offset"] if run else 0)
     analyzed_sirets = {row["siret"] for row in rows("SELECT siret FROM prospect_search_analysis WHERE search_key=?", (search_key,)) if row.get("siret")}
+    analyzed_sirets.update(row["siret"] for row in rows("SELECT siret FROM prospects WHERE siret IS NOT NULL AND trim(siret)<>'' AND last_checked_at IS NOT NULL") if row.get("siret"))
     found = search_businesses(zone, category, radius_km, max_results, enrich=enrich, contact_mode=contact_mode, legal_form=legal_form, include_unusable=True, sirene_start=start, skip_sirets=analyzed_sirets)
     created = updated = usable = 0; ids = []
     for prospect in found:
@@ -146,5 +147,6 @@ def delete_prospect(prospect_id: int, confirmation: str) -> dict:
 
 
 TOOLS = [prospect_search_import,list_prospects,search_prospects,create_prospect,update_prospect_status,add_note,add_task,complete_task,crm_summary,export_prospects_csv,delete_prospect]
+
 
 
