@@ -117,7 +117,8 @@ def search_sirene(zone: str, category: str = "all", max_results: int = 50, legal
     query = f'etatAdministratifEtablissement:A AND libelleCommuneEtablissement:"{_escape_query(zone)}"'
     codes = LEGAL_FORM_CODES.get(legal_form, ())
     if codes:
-        query += " AND categorieJuridiqueUniteLegale:(" + " OR ".join(codes) + ")"
+        legal_query = codes[0] if len(codes) == 1 else "(" + " OR ".join(codes) + ")"
+        query += " AND categorieJuridiqueUniteLegale:" + legal_query
     headers = {
         "Accept": "application/json",
         "X-INSEE-Api-Key-Integration": key,
