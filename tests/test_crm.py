@@ -671,16 +671,16 @@ def test_prospect_search_resume_uses_next_offset_and_keeps_unusable_analysis(mon
         calls.append(kwargs["sirene_start"])
         index = kwargs["sirene_start"]
         return [
-            {"company_name": f"EI {index}", "siren": f"12345678{index:01d}", "siret": f"123456789000{index:02d}", "city": "Toulouse", "email": None, "phone": None},
-            {"company_name": f"EI {index + 1}", "siren": f"12345678{index + 1:01d}", "siret": f"123456789000{index + 1:02d}", "city": "Toulouse", "email": "contact@example.test", "phone": None},
+            {"company_name": f"EI {index + item}", "siren": f"12345678{(index + item) % 10}", "siret": f"123456789{index + item:05d}", "city": "Toulouse", "email": "contact@example.test" if item == 999 else None, "phone": None}
+            for item in range(1000)
         ]
     monkeypatch.setattr(tools_module, "search_businesses", fake_search)
-    first = prospect_search_import("Toulouse", max_results=2, enrich=True, legal_form="ei")
-    second = prospect_search_import("Toulouse", max_results=2, enrich=True, legal_form="ei")
-    assert calls == [0, 2]
-    assert first["analyzed"] == 2 and first["found"] == 1
-    assert second["next_offset"] == 4
-    assert one("SELECT count(*) AS n FROM prospect_search_analysis")["n"] == 4
+    first = prospect_search_import("Toulouse", max_results=3, enrich=True, legal_form="ei")
+    second = prospect_search_import("Toulouse", max_results=3, enrich=True, legal_form="ei")
+    assert calls == [0, 1000, 2000, 3000, 4000, 5000]
+    assert first["analyzed"] == 3000 and first["found"] == 3
+    assert second["next_offset"] == 6000
+    assert one("SELECT count(*) AS n FROM prospect_search_analysis")["n"] == 6000
 
 
 
@@ -746,5 +746,6 @@ def test_web_enrichment_rejects_image_emails_and_nd_identity(monkeypatch):
     assert prospect_engine.is_public_business_email("lachaîn emetéo@2x.png".replace(" ", ""), None) is False
     monkeypatch.setattr(prospect_engine, "_search_web_results", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ND ne doit pas être recherché")))
     assert prospect_engine.discover_official_website("[ND]", "Toulouse") is None
+
 
 
