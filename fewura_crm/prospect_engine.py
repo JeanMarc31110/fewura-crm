@@ -7,7 +7,7 @@ import re
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from .sirene import SireneUnavailable, search_sirene
+from .sirene import SireneUnavailable, search_recherche_entreprises, search_sirene
 from bs4 import BeautifulSoup
 
 try:
@@ -379,6 +379,21 @@ def contact_matches_mode(prospect: dict, contact_mode: str = "either") -> bool:
     return (has_email or has_phone) if mode == "either" else (has_email if mode == "email" else has_phone)
 
 
+def _merge_registry_results(primary: list[dict], secondary: list[dict], limit: int) -> list[dict]:
+    """Merge official sources without duplicating the same establishment."""
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for prospect in [*primary, *secondary]:
+        key = str(prospect.get("siret") or prospect.get("siren") or fingerprint(prospect)).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(prospect)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
 def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either", legal_form: str = "all") -> list[dict]:
     # SIRENE/INSEE is the primary source. OSM remains a fallback when the API
     # is not configured, unavailable, or returns no establishment.
@@ -386,6 +401,18 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
         registry = search_sirene(zone, category, max_results, legal_form)
     except SireneUnavailable:
         registry = []
+    # Annuaire des Entreprises is an official complementary index. It is
+    # useful when SIRENE is sparse or when the requested legal form has many
+    # establishments split across legal units.
+    if len(registry) < max(1, int(max_results)):
+        try:
+            registry = _merge_registry_results(
+                registry,
+                search_recherche_entreprises(zone, category, max_results, legal_form),
+                max(1, int(max_results)),
+            )
+        except SireneUnavailable:
+            pass
     if not registry and legal_form != "all":
         # OSM does not expose the official legal form. Falling back here would
         # return companies that do not match the user's SIRENE filter.
@@ -481,4 +508,5 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
         if len(output) >= limit:
             break
     return output
+
 
