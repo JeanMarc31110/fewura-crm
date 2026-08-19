@@ -154,7 +154,7 @@ def test_registry_sources_are_merged_by_siret(monkeypatch):
     monkeypatch.setattr(prospect_engine, "search_sirene", lambda *args: primary)
     monkeypatch.setattr(prospect_engine, "search_recherche_entreprises", lambda *args: secondary)
     monkeypatch.setattr(prospect_engine, "discover_official_website", lambda *args, **kwargs: None)
-    found = prospect_engine.search_businesses("Toulouse", max_results=2, enrich=False, contact_mode="email")
+    found = prospect_engine.search_businesses("Toulouse", max_results=2, enrich=False, contact_mode="email", legal_form="ei")
     assert [item["siret"] for item in found] == ["11111111100011", "22222222200022"]
 
 
@@ -210,9 +210,11 @@ def test_every_sirene_result_is_web_enriched_before_contact_filter(monkeypatch):
     monkeypatch.setattr(prospect_engine, "extract_public_contacts", lambda website: {
         "email": "contact@example.test", "phone": None, "contact_form_url": None,
     })
+    monkeypatch.setattr(prospect_engine, "search_recherche_entreprises", lambda *args: [])
     found = prospect_engine.search_businesses(
         "Bordeaux", "all", 20, 20, enrich=False, contact_mode="email", legal_form="ei"
     )
     assert searched == ["11111111100011", "22222222200022", "33333333300033"]
     assert len(found) == 3
+
 
