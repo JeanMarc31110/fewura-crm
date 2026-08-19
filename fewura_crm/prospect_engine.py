@@ -198,7 +198,7 @@ def _deobfuscate(text: str) -> str:
     return text
 
 
-def extract_public_contacts(url: str, max_pages: int = 8) -> dict:
+def extract_public_contacts(url: str, max_pages: int = 8, want_email: bool = True, want_phone: bool = True) -> dict:
     if not url:
         return {"email": None, "contact_form_url": None, "phone": None}
     if not url.startswith(("http://", "https://")):
@@ -224,13 +224,14 @@ def extract_public_contacts(url: str, max_pages: int = 8) -> dict:
                     continue
                 visited.add(page_url)
                 soup = BeautifulSoup(page_html, "lxml")
-                for node in soup.select('a[href^="mailto:"]'):
-                    emails.append(normalize_email(node.get("href")))
-                for raw in [soup.get_text(" ", strip=True), str(soup)]:
-                    emails.extend(normalize_email(x) for x in EMAIL_RE.findall(_deobfuscate(raw)))
+                if want_email:
+                    for node in soup.select('a[href^="mailto:"]'):
+                        emails.append(normalize_email(node.get("href")))
+                    for raw in [soup.get_text(" ", strip=True), str(soup)]:
+                        emails.extend(normalize_email(x) for x in EMAIL_RE.findall(_deobfuscate(raw)))
                 if soup.find("form") and any(k in page_url.lower() for k in ("contact", "coordonne", "about", "equipe")):
                     forms.append(page_url)
-                if not phone:
+                if want_phone and not phone:
                     tel = soup.select_one('a[href^="tel:"]')
                     if tel:
                         phone = tel.get("href", "").replace("tel:", "").strip()
@@ -428,11 +429,17 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
                     prospect["company_name"], prospect["city"], address=prospect.get("address"),
                     siren=prospect.get("siren"), siret=prospect.get("siret")
                 )
-            if prospect.get("website") and not prospect.get("email"):
-                contacts = extract_public_contacts(prospect["website"])
+            if contact_mode == "email":
+                prospect["phone"] = None
+            elif contact_mode == "phone":
+                prospect["email"] = None
+            if prospect.get("website") and not prospect.get("email") and contact_mode != "phone":
+                contacts = extract_public_contacts(prospect["website"], want_email=True, want_phone=False)
                 prospect["email"] = contacts.get("email")
                 prospect["contact_form_url"] = contacts.get("contact_form_url")
-                prospect["phone"] = prospect.get("phone") or contacts.get("phone")
+            elif prospect.get("website") and not prospect.get("phone") and contact_mode != "email":
+                contacts = extract_public_contacts(prospect["website"], want_email=False, want_phone=True)
+                prospect["phone"] = contacts.get("phone")
             if prospect.get("email"):
                 prospect["email"] = normalize_email(prospect["email"])
                 if not is_public_business_email(prospect["email"], prospect.get("website")):
@@ -493,11 +500,17 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
         }
         if enrich and not prospect["website"]:
             prospect["website"] = discover_official_website(prospect["company_name"], prospect["city"])
-        if enrich and prospect["website"] and not prospect["email"]:
-            contacts = extract_public_contacts(prospect["website"])
+        if contact_mode == "email":
+            prospect["phone"] = None
+        elif contact_mode == "phone":
+            prospect["email"] = None
+        if enrich and prospect["website"] and not prospect["email"] and contact_mode != "phone":
+            contacts = extract_public_contacts(prospect["website"], want_email=True, want_phone=False)
             prospect["email"] = contacts.get("email")
             prospect["contact_form_url"] = contacts.get("contact_form_url")
-            prospect["phone"] = prospect["phone"] or contacts.get("phone")
+        elif enrich and prospect["website"] and not prospect["phone"] and contact_mode != "email":
+            contacts = extract_public_contacts(prospect["website"], want_email=False, want_phone=True)
+            prospect["phone"] = contacts.get("phone")
         if prospect.get("email"):
             prospect["email"] = normalize_email(prospect["email"])
             if not is_public_business_email(prospect["email"], prospect.get("website")):
@@ -516,6 +529,7 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
         if len(output) >= limit:
             break
     return output
+
 
 
 
