@@ -525,7 +525,7 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
     elif mode == "reel":
         if paused_reason:
             con.execute(
-                "UPDATE campaigns SET status='planifiee',scheduled_at=datetime('now','+1 second') WHERE id=?",
+                "UPDATE campaigns SET status='planifiee',scheduled_at=datetime('now','+24 hours') WHERE id=?",
                 (campaign_id,),
             )
         else:
