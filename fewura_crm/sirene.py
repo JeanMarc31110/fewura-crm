@@ -115,7 +115,7 @@ def _flatten_establishment(item: dict, category: str, zone: str, legal_form: str
     }
 
 
-def search_sirene(zone: str, category: str = "all", max_results: int = 50, legal_form: str = "all") -> list[dict]:
+def search_sirene(zone: str, category: str = "all", max_results: int = 50, legal_form: str = "all", start: int = 0) -> list[dict]:
     """Search active establishments in SIRENE before any OSM/web fallback."""
     key = _api_key()
     if not key:
@@ -128,27 +128,40 @@ def search_sirene(zone: str, category: str = "all", max_results: int = 50, legal
         legal_query = codes[0] if len(codes) == 1 else "(" + " OR ".join(codes) + ")"
         query += " AND categorieJuridiqueUniteLegale:" + legal_query
     headers = {**_api_headers(), "X-INSEE-Api-Key-Integration": key}
-    params = {"q": query, "nombre": max(1, min(int(max_results), 200)), "debut": 0}
+    limit = max(1, min(int(max_results), 1000))
+    page_size = 200
+    params = {"q": query, "nombre": page_size, "debut": max(0, int(start))}
+    results = []
+    seen_sirets: set[str] = set()
     try:
         with httpx.Client(timeout=httpx.Timeout(connect=8, read=25, write=8, pool=8), follow_redirects=True, headers=headers) as client:
-            response = client.get(SIRENE_ENDPOINT, params=params)
-            if response.status_code in (401, 403, 429):
-                raise SireneUnavailable(f"SIRENE HTTP {response.status_code}")
-            response.raise_for_status()
-            payload = response.json()
+            while len(results) < limit:
+                response = client.get(SIRENE_ENDPOINT, params=params)
+                if response.status_code in (401, 403, 429):
+                    raise SireneUnavailable(f"SIRENE HTTP {response.status_code}")
+                response.raise_for_status()
+                payload = response.json()
+                items = payload.get("etablissements", [])
+                if not items:
+                    break
+                for item in items:
+                    periods = item.get("periodesEtablissement") or []
+                    current = next((period for period in periods if period.get("dateFin") in (None, "")), periods[0] if periods else None)
+                    if current and str(current.get("etatAdministratifEtablissement") or "").upper() != "A":
+                        continue
+                    prospect = _flatten_establishment(item, category, zone, legal_form)
+                    if prospect and prospect["siret"] not in seen_sirets:
+                        seen_sirets.add(prospect["siret"])
+                        results.append(prospect)
+                        if len(results) >= limit:
+                            break
+                if len(items) < page_size:
+                    break
+                params["debut"] += len(items)
     except SireneUnavailable:
         raise
     except Exception as exc:
         raise SireneUnavailable(f"SIRENE indisponible : {exc}") from exc
-    results = []
-    for item in payload.get("etablissements", []):
-        periods = item.get("periodesEtablissement") or []
-        current = next((period for period in periods if period.get("dateFin") in (None, "")), periods[0] if periods else None)
-        if current and str(current.get("etatAdministratifEtablissement") or "").upper() != "A":
-            continue
-        prospect = _flatten_establishment(item, category, zone, legal_form)
-        if prospect:
-            results.append(prospect)
     return results
 
 
@@ -243,5 +256,6 @@ def search_recherche_entreprises(
         raise SireneUnavailable(f"Recherche Entreprises indisponible : {exc}") from exc
 
     return results
+
 
 
