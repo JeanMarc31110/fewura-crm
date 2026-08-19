@@ -12,9 +12,14 @@ import httpx
 
 from .db import connect, init_db, one, rows
 from . import gmail_oauth
+from .time_utils import local_input_to_utc_sql
 
 _scheduler_started = False
 _scheduler_lock = threading.Lock()
+
+EMAIL_BATCH_SIZE = 50
+EMAIL_BATCH_INTERVAL_SECONDS = 30 * 60
+GLOBAL_EMAIL_LIMIT_24H = 400
 
 SMS_SENDER_NUMBER = "+33773547857"
 
@@ -136,14 +141,21 @@ def test_gmail_connection() -> dict:
 
 
 def smtp_status() -> dict:
+    security = get_setting("smtp_security", "starttls").lower()
+    if security not in {"starttls", "ssl", "none"}:
+        security = "starttls"
+    try:
+        port = int(get_setting("smtp_port", "587") or 587)
+    except ValueError:
+        port = 587
     return {
         "configured": bool(get_setting("smtp_host") and get_setting("smtp_from_email")),
         "host": get_setting("smtp_host"),
-        "port": int(get_setting("smtp_port", "587") or 587),
+        "port": port,
         "username": get_setting("smtp_username"),
         "from_email": get_setting("smtp_from_email"),
         "from_name": get_setting("smtp_from_name", "FEWURA CRM"),
-        "security": get_setting("smtp_security", "starttls"),
+        "security": security,
     }
 
 
@@ -160,9 +172,14 @@ def sms_status() -> dict:
 def save_smtp(host: str, port: int, username: str, password: str, from_email: str, from_name: str, security: str) -> None:
     if security not in {"starttls", "ssl", "none"}:
         raise ValueError("Sécurité SMTP invalide")
+    port = int(port)
+    if security == "ssl" and port == 587:
+        port = 465
+    elif security == "starttls" and port == 465:
+        port = 587
     values = {
         "smtp_host": host.strip(),
-        "smtp_port": str(int(port)),
+        "smtp_port": str(port),
         "smtp_username": username.strip(),
         "smtp_from_email": from_email.strip(),
         "smtp_from_name": from_name.strip() or "FEWURA CRM",
@@ -233,34 +250,41 @@ def create_campaign(name: str, subject: str = APPROVED_EMAIL_SUBJECT, body: str 
     init_db()
     if mode not in {"simulation", "reel"}:
         raise ValueError("Mode campagne invalide")
+    scheduled_at_utc = local_input_to_utc_sql(scheduled_at) if scheduled_at else ""
     con = connect()
-    cur = con.execute(
-        "INSERT INTO campaigns(name,subject,body,sms_body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
-        (name.strip(), subject.strip() or APPROVED_EMAIL_SUBJECT, body.strip() or APPROVED_EMAIL_BODY, sms_body.strip() or APPROVED_SMS_BODY, category.strip(), city.strip(), int(min_score or 0), mode, scheduled_at or None, "planifiee" if scheduled_at else "brouillon"),
-    )
-    cid = cur.lastrowid
-    where = ["lead_score>=?"]
-    params = [int(min_score or 0)]
-    if category:
-        aliases = CATEGORY_ALIASES.get(category, [category])
-        where.append("lower(coalesce(category,'')) IN (" + ",".join("?" for _ in aliases) + ")")
-        params.extend([x.lower() for x in aliases])
-    if city:
-        where.append("lower(coalesce(city,'')) LIKE lower(?)")
-        params.append(f"%{city}%")
-    prospects = con.execute(
-        "SELECT * FROM prospects WHERE " + " AND ".join(where) + " ORDER BY lead_score DESC,id",
-        tuple(params),
-    ).fetchall()
-    for p in prospects:
-        channel = "email" if (p["email"] or "").strip() else ("sms" if (p["phone"] or "").strip() else "none")
-        con.execute(
-            "INSERT OR IGNORE INTO campaign_recipients(campaign_id,prospect_id,channel,status) VALUES(?,?,?,?)",
-            (cid, p["id"], channel, "pending" if channel != "none" else "skipped"),
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        cur = con.execute(
+            "INSERT INTO campaigns(name,subject,body,sms_body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (name.strip(), subject.strip() or APPROVED_EMAIL_SUBJECT, body.strip() or APPROVED_EMAIL_BODY, sms_body.strip() or APPROVED_SMS_BODY, category.strip(), city.strip(), int(min_score or 0), mode, scheduled_at_utc or None, "planifiee" if scheduled_at_utc else "brouillon"),
         )
-    con.commit()
-    con.close()
-    return int(cid)
+        cid = cur.lastrowid
+        where = ["lead_score>=?"]
+        params = [int(min_score or 0)]
+        if category:
+            aliases = CATEGORY_ALIASES.get(category, [category])
+            where.append("lower(coalesce(category,'')) IN (" + ",".join("?" for _ in aliases) + ")")
+            params.extend([x.lower() for x in aliases])
+        if city:
+            where.append("lower(coalesce(city,'')) LIKE lower(?)")
+            params.append(f"%{city}%")
+        prospects = con.execute(
+            "SELECT * FROM prospects WHERE " + " AND ".join(where) + " ORDER BY lead_score DESC,id",
+            tuple(params),
+        ).fetchall()
+        for p in prospects:
+            channel = "email" if (p["email"] or "").strip() else ("sms" if (p["phone"] or "").strip() else "none")
+            con.execute(
+                "INSERT OR IGNORE INTO campaign_recipients(campaign_id,prospect_id,channel,status) VALUES(?,?,?,?)",
+                (cid, p["id"], channel, "pending" if channel != "none" else "skipped"),
+            )
+        con.commit()
+        return int(cid)
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def create_campaign_for_selection(
@@ -281,34 +305,42 @@ def create_campaign_for_selection(
     ids = list(dict.fromkeys(int(pid) for pid in prospect_ids if int(pid) > 0))[:500]
     if not ids:
         raise ValueError("Aucun prospect sélectionné")
+    scheduled_at_utc = local_input_to_utc_sql(scheduled_at) if scheduled_at else ""
     con = connect()
-    cur = con.execute(
-        "INSERT INTO campaigns(name,subject,body,sms_body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
-        (name.strip(), subject.strip() or APPROVED_EMAIL_SUBJECT, body.strip() or APPROVED_EMAIL_BODY, sms_body.strip() or APPROVED_SMS_BODY, "", "", 0, mode, scheduled_at or None, "planifiee" if scheduled_at else "brouillon"),
-    )
-    cid = int(cur.lastrowid)
-    marks = ",".join("?" for _ in ids)
-    prospects = con.execute(f"SELECT * FROM prospects WHERE id IN ({marks}) ORDER BY id", tuple(ids)).fetchall()
-    for p in prospects:
-        selected = channel
-        if selected == "auto":
-            selected = "email" if (p["email"] or "").strip() else ("sms" if (p["phone"] or "").strip() else "none")
-        available = bool((p["email"] if selected == "email" else p["phone"] if selected == "sms" else "").strip())
-        status = "pending" if available else "skipped"
-        con.execute(
-            "INSERT OR IGNORE INTO campaign_recipients(campaign_id,prospect_id,channel,status) VALUES(?,?,?,?)",
-            (cid, p["id"], selected, status),
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        cur = con.execute(
+            "INSERT INTO campaigns(name,subject,body,sms_body,category,city,min_score,mode,scheduled_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (name.strip(), subject.strip() or APPROVED_EMAIL_SUBJECT, body.strip() or APPROVED_EMAIL_BODY, sms_body.strip() or APPROVED_SMS_BODY, "", "", 0, mode, scheduled_at_utc or None, "planifiee" if scheduled_at_utc else "brouillon"),
         )
-    con.commit()
-    con.close()
-    return cid
+        cid = int(cur.lastrowid)
+        marks = ",".join("?" for _ in ids)
+        prospects = con.execute(f"SELECT * FROM prospects WHERE id IN ({marks}) ORDER BY id", tuple(ids)).fetchall()
+        for p in prospects:
+            selected = channel
+            if selected == "auto":
+                selected = "email" if (p["email"] or "").strip() else ("sms" if (p["phone"] or "").strip() else "none")
+            contact_value = p["email"] if selected == "email" else p["phone"] if selected == "sms" else ""
+            available = bool((contact_value or "").strip())
+            status = "pending" if available else "skipped"
+            con.execute(
+                "INSERT OR IGNORE INTO campaign_recipients(campaign_id,prospect_id,channel,status) VALUES(?,?,?,?)",
+                (cid, p["id"], selected, status),
+            )
+        con.commit()
+        return cid
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def schedule_campaign(campaign_id: int, scheduled_at: str, mode: str) -> None:
     if mode not in {"simulation", "reel"}:
         raise ValueError("Mode invalide")
     con = connect()
-    con.execute("UPDATE campaigns SET scheduled_at=?,mode=?,status='planifiee' WHERE id=?", (scheduled_at, mode, campaign_id))
+    con.execute("UPDATE campaigns SET scheduled_at=?,mode=?,status='planifiee' WHERE id=?", (local_input_to_utc_sql(scheduled_at), mode, campaign_id))
     con.commit()
     con.close()
 
@@ -327,8 +359,7 @@ def _send_email(prospect: dict, subject: str, body: str) -> None:
             )
             return
         except Exception as oauth_error:
-            if not cfg["configured"]:
-                raise RuntimeError(f"Échec Gmail OAuth : {oauth_error}") from oauth_error
+            raise RuntimeError(f"Échec Gmail OAuth : {oauth_error}") from oauth_error
 
     if not cfg["configured"]:
         raise RuntimeError("Email non configuré : Gmail OAuth et SMTP sont indisponibles")
@@ -338,20 +369,32 @@ def _send_email(prospect: dict, subject: str, body: str) -> None:
     msg["Subject"] = subject
     msg.set_content(body)
     username, password = cfg["username"], get_setting("smtp_password")
-    server = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=30, context=ssl.create_default_context()) if cfg["security"] == "ssl" else smtplib.SMTP(cfg["host"], cfg["port"], timeout=30)
+    security = cfg["security"]
+    stage = "connexion"
     try:
-        server.ehlo()
-        if cfg["security"] == "starttls":
-            server.starttls(context=ssl.create_default_context())
+        if security == "ssl":
+            server = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=30, context=ssl.create_default_context())
+        else:
+            server = smtplib.SMTP(cfg["host"], cfg["port"], timeout=30)
+        with server:
+            stage = "salutation SMTP"
             server.ehlo()
-        if username:
-            server.login(username, password)
-        server.send_message(msg)
-    finally:
-        try:
-            server.quit()
-        except Exception:
-            pass
+            if security == "starttls":
+                stage = "négociation STARTTLS"
+                server.starttls(context=ssl.create_default_context())
+                server.ehlo()
+            if username:
+                stage = "authentification"
+                server.login(username, password)
+            stage = "transmission"
+            refused = server.send_message(msg)
+            if refused:
+                raise RuntimeError(f"Destinataires refusés par le serveur : {', '.join(refused)}")
+    except Exception as exc:
+        detail = f"Échec SMTP {cfg['host']}:{cfg['port']} ({security}) pendant {stage} : {exc}"
+        if oauth_cfg["configured"]:
+            detail = f"Échec Gmail OAuth puis SMTP : {detail}"
+        raise RuntimeError(detail) from exc
 
 
 def _sms_sent_today(con) -> int:
@@ -390,7 +433,7 @@ def _log(con, prospect_id: int, campaign_id: int, channel: str, status: str, rec
     )
 
 
-def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int = 500) -> dict:
+def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int = EMAIL_BATCH_SIZE) -> dict:
     init_db()
     con = connect()
     camp = con.execute("SELECT * FROM campaigns WHERE id=?", (campaign_id,)).fetchone()
@@ -402,6 +445,20 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
     if mode not in {"simulation", "reel"}:
         con.close()
         raise ValueError("Mode invalide")
+    if force_mode is not None:
+        con.execute(
+            "UPDATE campaigns SET mode=?,status='brouillon',finished_at=NULL WHERE id=?",
+            (mode, campaign_id),
+        )
+        if mode == "reel":
+            # Une simulation ne doit pas condamner les destinataires à rester simulés.
+            # Seuls les destinataires simulés sont réarmés : ceux déjà envoyés restent
+            # intacts afin d'empêcher tout doublon lors d'un second clic.
+            con.execute(
+                "UPDATE campaign_recipients SET status='pending',last_error=NULL "
+                "WHERE campaign_id=? AND status='simulated'",
+                (campaign_id,),
+            )
     con.execute("UPDATE campaigns SET status='en_cours',started_at=coalesce(started_at,CURRENT_TIMESTAMP) WHERE id=?", (campaign_id,))
     con.commit()
     recips = con.execute(
@@ -410,6 +467,7 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
     ).fetchall()
     stats = {"processed": 0, "sent": 0, "simulated": 0, "errors": 0, "skipped": 0, "email": 0, "sms": 0}
     sms_cfg = sms_status()
+    paused_reason = ""
     for row in recips:
         p = dict(row)
         rid = row["id"]
@@ -419,6 +477,15 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
         recipient = p.get("email") if channel == "email" else p.get("phone")
         stats["processed"] += 1
         try:
+            if mode == "reel" and channel == "email":
+                quota = con.execute(
+                    "SELECT count(*) FROM communications "
+                    "WHERE channel='email' AND status='sent' "
+                    "AND datetime(created_at)>=datetime('now','-24 hours')"
+                ).fetchone()[0]
+                if quota >= GLOBAL_EMAIL_LIMIT_24H:
+                    paused_reason = f"Plafond global atteint ({GLOBAL_EMAIL_LIMIT_24H} emails sur 24 h)"
+                    break
             if channel not in {"email", "sms"}:
                 raise RuntimeError("Aucun canal disponible")
             if mode == "simulation":
@@ -439,6 +506,8 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
                 (status, status, rid),
             )
             _log(con, p["prospect_id"], campaign_id, channel, status, recipient or "", subject, body)
+            if mode == "reel" and status == "sent":
+                con.execute("UPDATE prospects SET status='archive',updated_at=CURRENT_TIMESTAMP WHERE id=?", (p["prospect_id"],))
             con.commit()
             if mode == "reel" and channel == "sms" and sms_cfg["delay_seconds"] > 0:
                 time.sleep(sms_cfg["delay_seconds"])
@@ -449,11 +518,33 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
             con.commit()
             stats["errors"] += 1
     pending = con.execute("SELECT count(*) FROM campaign_recipients WHERE campaign_id=? AND status='pending'", (campaign_id,)).fetchone()[0]
+    stats["skipped"] = con.execute(
+        "SELECT count(*) FROM campaign_recipients WHERE campaign_id=? AND status='skipped'",
+        (campaign_id,),
+    ).fetchone()[0]
     if pending == 0:
         con.execute("UPDATE campaigns SET status='terminee',finished_at=CURRENT_TIMESTAMP WHERE id=?", (campaign_id,))
+    elif mode == "reel":
+        if paused_reason:
+            con.execute(
+                "UPDATE campaigns SET status='planifiee',scheduled_at=datetime('now','+24 hours') WHERE id=?",
+                (campaign_id,),
+            )
+        else:
+            con.execute(
+                "UPDATE campaigns SET status='planifiee',scheduled_at=datetime('now','+1800 seconds') WHERE id=?",
+                (campaign_id,),
+            )
     con.commit()
     con.close()
-    return stats | {"campaign_id": campaign_id, "mode": mode, "pending": pending}
+    return stats | {
+        "campaign_id": campaign_id,
+        "mode": mode,
+        "pending": pending,
+        "paused": bool(paused_reason),
+        "paused_reason": paused_reason,
+        "batch_size": EMAIL_BATCH_SIZE,
+    }
 
 
 def retry_errors(campaign_id: int) -> int:
@@ -468,7 +559,7 @@ def retry_errors(campaign_id: int) -> int:
 
 def process_due_campaigns() -> list[dict]:
     init_db()
-    due = rows("SELECT id FROM campaigns WHERE status='planifiee' AND scheduled_at IS NOT NULL AND datetime(scheduled_at)<=datetime('now','localtime') ORDER BY scheduled_at")
+    due = rows("SELECT id FROM campaigns WHERE status='planifiee' AND scheduled_at IS NOT NULL AND datetime(scheduled_at)<=datetime('now') ORDER BY scheduled_at")
     results = []
     for c in due:
         try:
@@ -509,3 +600,4 @@ def start_scheduler(stop_predicate=lambda: False, interval_seconds: int = 15) ->
                     return
                 time.sleep(1)
     threading.Thread(target=loop, name="fewura-outreach-scheduler", daemon=True).start()
+

@@ -1,10 +1,23 @@
 import sqlite3
+import threading
 from .paths import database_path
 
 
+SQLITE_BUSY_TIMEOUT_MS = 30_000
+_init_lock = threading.RLock()
+_initialized_databases: set[str] = set()
+
+
 def connect():
-    con = sqlite3.connect(database_path())
+    # Autocommit prevents an interrupted request from silently retaining an
+    # implicit write transaction. Multi-step writes explicitly BEGIN below.
+    con = sqlite3.connect(
+        database_path(),
+        timeout=SQLITE_BUSY_TIMEOUT_MS / 1000,
+        isolation_level=None,
+    )
     con.row_factory = sqlite3.Row
+    con.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
     con.execute("PRAGMA foreign_keys=ON")
     return con
 
@@ -16,8 +29,24 @@ def _ensure_column(con, table: str, column: str, definition: str) -> None:
 
 
 def init_db() -> None:
-    con = connect()
-    con.executescript("""
+    db_key = str(database_path().resolve())
+    if db_key in _initialized_databases:
+        return
+    with _init_lock:
+        if db_key in _initialized_databases:
+            return
+        con = connect()
+        try:
+            # WAL permet aux lectures du tableau de bord et aux écritures du
+            # planificateur de cohabiter sans se bloquer mutuellement.
+            try:
+                con.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.OperationalError:
+                # Some managed Windows folders refuse SQLite's -wal/-shm sidecars.
+                # The database remains usable with the rollback journal.
+                con.execute("PRAGMA journal_mode=DELETE")
+            con.execute("PRAGMA synchronous=NORMAL")
+            con.executescript("""
     CREATE TABLE IF NOT EXISTS prospects(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       company_name TEXT NOT NULL,
@@ -97,42 +126,73 @@ def init_db() -> None:
       FOREIGN KEY(prospect_id) REFERENCES prospects(id) ON DELETE SET NULL,
       FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     );
-    """)
-    _ensure_column(con, "campaigns", "sms_body", "TEXT NOT NULL DEFAULT ''")
-    for column, definition in [
-        ("address", "TEXT"), ("postal_code", "TEXT"), ("region", "TEXT"),
-        ("country", "TEXT DEFAULT 'FR'"), ("lat", "REAL"), ("lon", "REAL"),
-        ("contact_form_url", "TEXT"), ("source_url", "TEXT"), ("source_type", "TEXT"),
-        ("confidence", "REAL DEFAULT 0"), ("fingerprint", "TEXT"),
-        ("last_checked_at", "TEXT"),
-    ]:
-        _ensure_column(con, "prospects", column, definition)
-    con.execute("CREATE INDEX IF NOT EXISTS idx_prospects_fingerprint ON prospects(fingerprint)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_prospects_company_city ON prospects(company_name, city)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_campaigns_schedule ON campaigns(status, scheduled_at)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_communications_prospect ON communications(prospect_id, created_at)")
-    con.commit()
-    con.close()
+    CREATE TABLE IF NOT EXISTS prospect_search_runs(
+      search_key TEXT PRIMARY KEY,
+      next_offset INTEGER NOT NULL DEFAULT 0,
+      analyzed_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS prospect_search_analysis(
+      search_key TEXT NOT NULL,
+      siret TEXT NOT NULL,
+      analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      has_email INTEGER NOT NULL DEFAULT 0,
+      has_phone INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(search_key, siret)
+    );
+            """)
+            _ensure_column(con, "campaigns", "sms_body", "TEXT NOT NULL DEFAULT ''")
+            for column, definition in [
+                ("address", "TEXT"), ("postal_code", "TEXT"), ("region", "TEXT"),
+                ("country", "TEXT DEFAULT 'FR'"), ("lat", "REAL"), ("lon", "REAL"),
+                ("contact_form_url", "TEXT"), ("source_url", "TEXT"), ("source_type", "TEXT"),
+                ("confidence", "REAL DEFAULT 0"), ("fingerprint", "TEXT"),
+                ("last_checked_at", "TEXT"), ("siren", "TEXT"), ("siret", "TEXT"), ("activity_code", "TEXT"),
+                ("legal_form", "TEXT"), ("legal_form_code", "TEXT"),
+            ]:
+                _ensure_column(con, "prospects", column, definition)
+            con.execute("CREATE INDEX IF NOT EXISTS idx_prospects_fingerprint ON prospects(fingerprint)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_prospects_company_city ON prospects(company_name, city)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_campaigns_schedule ON campaigns(status, scheduled_at)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_communications_prospect ON communications(prospect_id, created_at)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_search_analysis_siret ON prospect_search_analysis(siret)")
+            con.commit()
+            _initialized_databases.add(db_key)
+        except Exception:
+            con.rollback()
+            raise
+        finally:
+            con.close()
 
 
 def rows(sql: str, params=()):
     con = connect()
-    out = [dict(r) for r in con.execute(sql, params).fetchall()]
-    con.close()
-    return out
+    try:
+        return [dict(r) for r in con.execute(sql, params).fetchall()]
+    finally:
+        con.close()
 
 
 def one(sql: str, params=()):
     con = connect()
-    row = con.execute(sql, params).fetchone()
-    con.close()
-    return dict(row) if row else None
+    try:
+        row = con.execute(sql, params).fetchone()
+        return dict(row) if row else None
+    finally:
+        con.close()
 
 
 def execute(sql: str, params=()):
     con = connect()
-    cur = con.execute(sql, params)
-    con.commit()
-    rid = cur.lastrowid
-    con.close()
-    return rid
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        cur = con.execute(sql, params)
+        con.commit()
+        return cur.lastrowid
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+

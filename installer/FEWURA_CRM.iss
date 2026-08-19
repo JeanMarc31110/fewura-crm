@@ -1,5 +1,5 @@
 #define MyAppName "FEWURA CRM"
-#define MyAppVersion "1.3.1"
+#define MyAppVersion "1.4.4"
 #define MyAppPublisher "FEWURA"
 #define MyAppExeName "FEWURA_CRM.exe"
 
@@ -11,7 +11,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\FEWURA\CRM
 DefaultGroupName=FEWURA\CRM
 OutputDir=output
-OutputBaseFilename=FEWURA_CRM_Setup_SMS_ONLY_1.3.1
+OutputBaseFilename=FEWURA_CRM_Setup_SMS_ONLY_1.4.4
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -45,7 +45,7 @@ Type: files; Name: "{userdesktop}\FEWURA_CRM.exe"
 Type: files; Name: "{commondesktop}\FEWURA_CRM.exe"
 
 [Files]
-Source: "..\dist\FEWURA_CRM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\FEWURA_CRM.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\FEWURA CRM"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

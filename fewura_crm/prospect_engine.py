@@ -7,6 +7,7 @@ import re
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from .sirene import SireneUnavailable, search_recherche_entreprises, search_sirene
 from bs4 import BeautifulSoup
 
 try:
@@ -30,8 +31,34 @@ CATEGORIES = {
     "batiment": {"craft": ["builder", "electrician", "plumber", "carpenter", "painter"]},
     "coiffure": {"shop": ["hairdresser"]},
     "sport": {"leisure": ["fitness_centre", "sports_centre"]},
-    "transport": {"office": ["logistics"], "craft": ["transportation"]},
+    "transport": {
+        "office": ["logistics", "transport", "moving_company", "courier", "freight_forwarder"],
+        "craft": ["transportation"],
+        "industrial": ["logistics"],
+    },
+    "commerce": {"shop": ["supermarket", "convenience", "department_store", "clothes", "bakery", "butcher", "furniture"]},
+    "artisanat": {"craft": ["carpenter", "plumber", "electrician", "painter", "photographer", "shoemaker"]},
+    "sante": {"amenity": ["doctors", "dentist", "clinic", "pharmacy", "veterinary"]},
+    "beauté": {"shop": ["beauty", "cosmetics"], "amenity": ["spa"]},
+    "formation": {"amenity": ["school", "college", "language_school"]},
+    "conseil": {"office": ["consulting", "business_consulting", "financial"]},
+    "agence_immobiliere": {"office": ["estate_agent"]},
+    "automobile": {"shop": ["car", "car_parts", "tyres"]},
+    "logistique": {"office": ["logistics", "courier", "freight_forwarder"]},
+    "nettoyage": {"office": ["cleaning"], "craft": ["cleaning"]},
+    "securite": {"office": ["security"]},
+    "evenementiel": {"office": ["event_management"]},
 }
+
+PUBLIC_OWNERSHIP_VALUES = {
+    "government", "public", "state", "municipal", "regional", "local_authority",
+}
+PUBLIC_NAME_MARKERS = (
+    "mairie", "toulouse métropole", "toulouse metropole", "métropole", "metropole",
+    "préfecture", "prefecture", "conseil départemental", "conseil régional", "conseil regional",
+    "ministère", "ministere", "université", "universite", "chu", "crous", "sncf", "ratp",
+    "tisséo", "tisseo", "la poste",
+)
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
@@ -55,7 +82,7 @@ FREE_MAIL_DOMAINS = {
 }
 BLOCKED_HOSTS = {
     "facebook.com", "instagram.com", "linkedin.com", "pagesjaunes.fr", "tripadvisor.fr",
-    "societe.com", "verif.com", "pappers.fr", "google.com", "maps.google.com", "x.com",
+    "societe.com", "verif.com", "pappers.fr", "google.com", "maps.google.com", "x.com", "lefigaro.fr", "univ-tlse3.fr",
     "twitter.com", "youtube.com",
 }
 CONTACT_HINTS = (
@@ -83,7 +110,7 @@ def build_overpass_query(lat: float, lon: float, radius: int, category: str) -> 
         clauses = "".join(f'nwr(around:{radius},{lat},{lon})["{key}"="{value}"];' for key, values in cfg.items() for value in values)
     else:
         clauses = "".join(f'nwr(around:{radius},{lat},{lon})["{key}"];' for key in ["shop", "office", "amenity", "craft", "tourism", "leisure"])
-    return f'[out:json][timeout:30];({clauses});out tags center {max(100, radius // 1000)};'
+    return f'[out:json][timeout:30];({clauses});out tags center;'
 
 
 def _fetch_overpass(query: str) -> dict:
@@ -130,6 +157,8 @@ def is_public_business_email(email: str, website: str | None = None) -> bool:
     domain = _email_domain(email)
     if not domain or domain in DISPOSABLE_DOMAINS:
         return False
+    if domain.rsplit(".", 1)[-1] in {"png", "jpg", "jpeg", "gif", "svg", "webp", "css", "js"}:
+        return False
     local = email.split("@", 1)[0]
     if local in {"noreply", "no-reply", "donotreply", "do-not-reply"}:
         return False
@@ -169,7 +198,7 @@ def _deobfuscate(text: str) -> str:
     return text
 
 
-def extract_public_contacts(url: str, max_pages: int = 8) -> dict:
+def extract_public_contacts(url: str, max_pages: int = 8, want_email: bool = True, want_phone: bool = True) -> dict:
     if not url:
         return {"email": None, "contact_form_url": None, "phone": None}
     if not url.startswith(("http://", "https://")):
@@ -195,13 +224,14 @@ def extract_public_contacts(url: str, max_pages: int = 8) -> dict:
                     continue
                 visited.add(page_url)
                 soup = BeautifulSoup(page_html, "lxml")
-                for node in soup.select('a[href^="mailto:"]'):
-                    emails.append(normalize_email(node.get("href")))
-                for raw in [soup.get_text(" ", strip=True), str(soup)]:
-                    emails.extend(normalize_email(x) for x in EMAIL_RE.findall(_deobfuscate(raw)))
+                if want_email:
+                    for node in soup.select('a[href^="mailto:"]'):
+                        emails.append(normalize_email(node.get("href")))
+                    for raw in [soup.get_text(" ", strip=True), str(soup)]:
+                        emails.extend(normalize_email(x) for x in EMAIL_RE.findall(_deobfuscate(raw)))
                 if soup.find("form") and any(k in page_url.lower() for k in ("contact", "coordonne", "about", "equipe")):
                     forms.append(page_url)
-                if not phone:
+                if want_phone and not phone:
                     tel = soup.select_one('a[href^="tel:"]')
                     if tel:
                         phone = tel.get("href", "").replace("tel:", "").strip()
@@ -238,30 +268,71 @@ def _tokens(value: str | None) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9]{3,}", (value or "").lower()) if token not in {"sas", "sarl", "eurl", "sa", "sasu", "france", "entreprise", "societe"}}
 
 
-def discover_official_website(company_name: str, city: str | None = None, max_results: int = 8) -> str | None:
-    if not company_name or DDGS is None:
+def _search_web_results(query: str, max_results: int = 8) -> list[dict]:
+    if DDGS is not None:
+        try:
+            return list(DDGS().text(query, region="fr-fr", safesearch="moderate", max_results=max_results) or [])
+        except Exception:
+            pass
+
+    # Fallback for packaged installs where the optional ddgs package is absent.
+    headers = {"User-Agent": os.getenv("USER_AGENT", "Mozilla/5.0 FEWURA-CRM-PROSPECT/1.0")}
+    try:
+        with httpx.Client(timeout=12, headers=headers, follow_redirects=True) as client:
+            response = client.get("https://www.bing.com/search", params={"q": query, "count": max_results})
+            response.raise_for_status()
+        soup = BeautifulSoup(response.text, "lxml")
+        results = []
+        for item in soup.select("li.b_algo")[:max_results]:
+            link = item.select_one("h2 a[href]")
+            if not link:
+                continue
+            results.append({
+                "href": link.get("href"),
+                "title": link.get_text(" ", strip=True),
+                "body": item.get_text(" ", strip=True),
+            })
+        return results
+    except Exception:
+        return []
+
+
+def discover_official_website(
+    company_name: str,
+    city: str | None = None,
+    max_results: int = 8,
+    address: str | None = None,
+    siren: str | None = None,
+    siret: str | None = None,
+) -> str | None:
+    """Find a public business site using SIRENE identity data."""
+    if not company_name or company_name.strip().upper() in {"[ND]", "ND"}:
         return None
-    query = f'"{company_name}" {city or ""} site officiel contact'.strip()
+    identity = " ".join(x for x in (address, city, siren, siret) if x)
+    queries = [
+        f'"{company_name}" {identity} site officiel contact'.strip(),
+        f'"{company_name}" {city or ""} email téléphone'.strip(),
+    ]
     company_tokens = _tokens(company_name)
     city_tokens = _tokens(city)
     ranked = []
-    try:
-        for item in DDGS().text(query, region="fr-fr", safesearch="moderate", max_results=max_results) or []:
+    seen_urls = set()
+    for query in queries:
+        for item in _search_web_results(query, max_results):
             url = item.get("href") or item.get("url")
-            if not url:
+            if not url or url in seen_urls:
                 continue
+            seen_urls.add(url)
             host = _website_domain(url)
             if not host or host in BLOCKED_HOSTS or any(host.endswith("." + blocked) for blocked in BLOCKED_HOSTS):
                 continue
             haystack = " ".join([host, item.get("title", ""), item.get("body", "")]).lower()
             score = 4 * sum(1 for token in company_tokens if token in haystack) + sum(1 for token in city_tokens if token in haystack)
-            if any(word in haystack for word in ("contact", "officiel", "accueil", "cabinet", "agence")):
+            if any(word in haystack for word in ("contact", "officiel", "accueil", "cabinet", "agence", "email", "téléphone")):
                 score += 2
             if host.endswith(".fr"):
                 score += 1
             ranked.append((score, url))
-    except Exception:
-        return None
     ranked.sort(key=lambda item: item[0], reverse=True)
     return ranked[0][1] if ranked and ranked[0][0] >= 4 else None
 
@@ -288,10 +359,104 @@ def fingerprint(prospect: dict) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True) -> list[dict]:
+def is_private_business(name: str, tags: dict) -> bool:
+    ownership_values = " ".join(
+        str(tags.get(key, "")).strip().lower()
+        for key in ("ownership", "operator:type", "government", "owner:type")
+    )
+    if any(value in ownership_values.split() for value in PUBLIC_OWNERSHIP_VALUES):
+        return False
+    normalized_name = re.sub(r"\s+", " ", (name or "").strip().lower())
+    return not any(marker in normalized_name for marker in PUBLIC_NAME_MARKERS)
+
+
+def contact_matches_mode(prospect: dict, contact_mode: str = "either") -> bool:
+    """Check the selected contact requirement before importing a prospect."""
+    mode = (contact_mode or "either").strip().lower()
+    if mode not in {"either", "email", "phone"}:
+        raise ValueError("contact_mode doit être either, email ou phone")
+    has_email = bool(str(prospect.get("email") or "").strip())
+    has_phone = bool(str(prospect.get("phone") or "").strip())
+    return (has_email or has_phone) if mode == "either" else (has_email if mode == "email" else has_phone)
+
+
+def _merge_registry_results(primary: list[dict], secondary: list[dict], limit: int) -> list[dict]:
+    """Merge official sources without duplicating the same establishment."""
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for prospect in [*primary, *secondary]:
+        key = str(prospect.get("siret") or prospect.get("siren") or fingerprint(prospect)).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(prospect)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either", legal_form: str = "all", include_unusable: bool = False, sirene_start: int = 0, skip_sirets: set[str] | None = None) -> list[dict]:
+    # SIRENE/INSEE is the primary source. OSM remains a fallback when the API
+    # is not configured, unavailable, or returns no establishment.
+    try:
+        registry = search_sirene(zone, category, max_results, legal_form, sirene_start)
+    except SireneUnavailable:
+        registry = []
+    # Annuaire des Entreprises is an official complementary index. It is
+    # useful when SIRENE is sparse or when the requested legal form has many
+    # establishments split across legal units.
+    if legal_form != "all" and (not registry or len(registry) < max(1, int(max_results))):
+        try:
+            registry = _merge_registry_results(
+                registry,
+                search_recherche_entreprises(zone, category, max_results, legal_form),
+                max(1, int(max_results)),
+            )
+        except SireneUnavailable:
+            pass
+    if skip_sirets:
+        registry = [item for item in registry if str(item.get("siret") or "") not in skip_sirets]
+    if not registry and legal_form != "all":
+        # OSM does not expose the official legal form. Falling back here would
+        # return companies that do not match the user's SIRENE filter.
+        return []
+
+    if registry:
+        output = []
+        for prospect in registry:
+            if not prospect.get("website"):
+                prospect["website"] = discover_official_website(
+                    prospect["company_name"], prospect["city"], address=prospect.get("address"),
+                    siren=prospect.get("siren"), siret=prospect.get("siret")
+                )
+            if contact_mode == "email":
+                prospect["phone"] = None
+            elif contact_mode == "phone":
+                prospect["email"] = None
+            if prospect.get("website") and not prospect.get("email") and contact_mode != "phone":
+                contacts = extract_public_contacts(prospect["website"], want_email=True, want_phone=False)
+                prospect["email"] = contacts.get("email")
+                prospect["contact_form_url"] = contacts.get("contact_form_url")
+            elif prospect.get("website") and not prospect.get("phone") and contact_mode != "email":
+                contacts = extract_public_contacts(prospect["website"], want_email=False, want_phone=True)
+                prospect["phone"] = contacts.get("phone")
+            if prospect.get("email"):
+                prospect["email"] = normalize_email(prospect["email"])
+                if not is_public_business_email(prospect["email"], prospect.get("website")):
+                    prospect["email"] = None
+            if not contact_matches_mode(prospect, contact_mode):
+                if include_unusable:
+                    output.append(prospect)
+                continue
+            prospect["lead_score"] = lead_score(prospect)
+            prospect["confidence"] = round(prospect["lead_score"] / 100, 2)
+            prospect["fingerprint"] = fingerprint(prospect)
+            output.append(prospect)
+        return output
+
     geo = geocode(zone)
     radius = max(1000, min(int(radius_km) * 1000, 50000))
-    limit = max(1, min(int(max_results), 100))
+    limit = max(1, min(int(max_results), 1000))
     query = build_overpass_query(geo["lat"], geo["lon"], radius, category)
     try:
         data = _fetch_overpass(query)
@@ -305,12 +470,12 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
     output = []
     seen = set()
     for element in data.get("elements", []):
-        if len(output) >= limit:
-            break
         tags = element.get("tags", {})
         center = element.get("center", {})
         name = tags.get("name") or tags.get("brand") or tags.get("operator")
         if not name:
+            continue
+        if not is_private_business(name, tags):
             continue
         key = (name.lower().strip(), tags.get("addr:street"), tags.get("addr:housenumber"))
         if key in seen:
@@ -335,17 +500,37 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
         }
         if enrich and not prospect["website"]:
             prospect["website"] = discover_official_website(prospect["company_name"], prospect["city"])
-        if enrich and prospect["website"] and not prospect["email"]:
-            contacts = extract_public_contacts(prospect["website"])
+        if contact_mode == "email":
+            prospect["phone"] = None
+        elif contact_mode == "phone":
+            prospect["email"] = None
+        if enrich and prospect["website"] and not prospect["email"] and contact_mode != "phone":
+            contacts = extract_public_contacts(prospect["website"], want_email=True, want_phone=False)
             prospect["email"] = contacts.get("email")
             prospect["contact_form_url"] = contacts.get("contact_form_url")
-            prospect["phone"] = prospect["phone"] or contacts.get("phone")
+        elif enrich and prospect["website"] and not prospect["phone"] and contact_mode != "email":
+            contacts = extract_public_contacts(prospect["website"], want_email=False, want_phone=True)
+            prospect["phone"] = contacts.get("phone")
         if prospect.get("email"):
             prospect["email"] = normalize_email(prospect["email"])
             if not is_public_business_email(prospect["email"], prospect.get("website")):
                 prospect["email"] = None
+        # A result without any usable contact channel cannot be actioned.
+        if not contact_matches_mode(prospect, contact_mode):
+            if include_unusable:
+                output.append(prospect)
+            if len(output) >= limit:
+                break
+            continue
         prospect["lead_score"] = lead_score(prospect)
         prospect["confidence"] = round(prospect["lead_score"] / 100, 2)
         prospect["fingerprint"] = fingerprint(prospect)
         output.append(prospect)
+        if len(output) >= limit:
+            break
     return output
+
+
+
+
+
