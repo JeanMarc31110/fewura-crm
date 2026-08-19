@@ -21,7 +21,8 @@ from fastapi.testclient import TestClient
 from fewura_crm.db import init_db, execute, one, rows, connect, SQLITE_BUSY_TIMEOUT_MS
 from fewura_crm.prospect_engine import build_overpass_query, fingerprint
 import fewura_crm.prospect_engine as prospect_engine
-from fewura_crm.tools import _merge_prospect_from_fewura
+from fewura_crm.tools import _merge_prospect_from_fewura, prospect_search_import
+import fewura_crm.tools as tools_module
 from fewura_crm.outreach import create_campaign, create_campaign_for_selection, run_campaign, process_due_campaigns, schedule_campaign, _send_email, save_smtp, APPROVED_EMAIL_SUBJECT, APPROVED_EMAIL_BODY, APPROVED_SMS_BODY
 from fewura_crm.time_utils import local_input_to_utc_sql, utc_sql_to_local_display, local_now
 import fewura_crm.gmail_oauth as gmail_oauth
@@ -660,6 +661,24 @@ def test_prospect_page_exposes_contact_modes_and_expanded_activity_choices():
         assert "Événementiel" in page.text
 
 
+def test_prospect_search_resume_uses_next_offset_and_keeps_unusable_analysis(monkeypatch):
+    calls = []
+    def fake_search(*args, **kwargs):
+        calls.append(kwargs["sirene_start"])
+        index = kwargs["sirene_start"]
+        return [
+            {"company_name": f"EI {index}", "siren": f"12345678{index:01d}", "siret": f"123456789000{index:02d}", "city": "Toulouse", "email": None, "phone": None},
+            {"company_name": f"EI {index + 1}", "siren": f"12345678{index + 1:01d}", "siret": f"123456789000{index + 1:02d}", "city": "Toulouse", "email": "contact@example.test", "phone": None},
+        ]
+    monkeypatch.setattr(tools_module, "search_businesses", fake_search)
+    first = prospect_search_import("Toulouse", max_results=2, enrich=True, legal_form="ei")
+    second = prospect_search_import("Toulouse", max_results=2, enrich=True, legal_form="ei")
+    assert calls == [0, 2]
+    assert first["analyzed"] == 2 and first["found"] == 1
+    assert second["next_offset"] == 4
+    assert one("SELECT count(*) AS n FROM prospect_search_analysis")["n"] == 4
+
+
 
 def test_real_campaign_uses_batches_of_50_and_schedules_next_batch(monkeypatch):
     ids = [execute("INSERT INTO prospects(company_name,email) VALUES(?,?)", (f"Lot {i}", f"lot{i}@example.test")) for i in range(55)]
@@ -723,3 +742,4 @@ def test_web_enrichment_rejects_image_emails_and_nd_identity(monkeypatch):
     assert prospect_engine.is_public_business_email("lachaîn emetéo@2x.png".replace(" ", ""), None) is False
     monkeypatch.setattr(prospect_engine, "_search_web_results", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ND ne doit pas être recherché")))
     assert prospect_engine.discover_official_website("[ND]", "Toulouse") is None
+
