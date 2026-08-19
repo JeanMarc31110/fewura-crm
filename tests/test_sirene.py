@@ -110,13 +110,13 @@ def test_sirene_discards_inactive_establishments(monkeypatch):
             return {
                 "etablissements": [
                     {
-                        "etatAdministratifEtablissement": "F",
                         "siret": "11111111100011",
+                        "periodesEtablissement": [{"dateFin": None, "etatAdministratifEtablissement": "F"}],
                         "uniteLegale": {"denominationUniteLegale": "Fermée"},
                     },
                     {
-                        "etatAdministratifEtablissement": "A",
                         "siret": "22222222200022",
+                        "periodesEtablissement": [{"dateFin": None, "etatAdministratifEtablissement": "A"}],
                         "uniteLegale": {"denominationUniteLegale": "Active"},
                     },
                 ]
