@@ -134,3 +134,26 @@ def test_sirene_discards_inactive_establishments(monkeypatch):
     monkeypatch.setattr(sirene.httpx, "Client", Client)
     found = search_sirene("Bordeaux", max_results=10, legal_form="ei")
     assert [item["company_name"] for item in found] == ["Active"]
+
+
+
+def test_every_sirene_result_is_web_enriched_before_contact_filter(monkeypatch):
+    registry = [
+        {"company_name": "Entreprise A", "city": "Bordeaux", "siren": "111111111", "siret": "11111111100011", "website": None, "email": None, "phone": None},
+        {"company_name": "Entreprise B", "city": "Bordeaux", "siren": "222222222", "siret": "22222222200022", "website": None, "email": None, "phone": None},
+        {"company_name": "Entreprise C", "city": "Bordeaux", "siren": "333333333", "siret": "33333333300033", "website": None, "email": None, "phone": None},
+    ]
+    searched = []
+    monkeypatch.setattr(prospect_engine, "search_sirene", lambda *args: [dict(item) for item in registry])
+    def discover(*args, **kwargs):
+        searched.append(kwargs.get("siret"))
+        return "https://example.test"
+    monkeypatch.setattr(prospect_engine, "discover_official_website", discover)
+    monkeypatch.setattr(prospect_engine, "extract_public_contacts", lambda website: {
+        "email": "contact@example.test", "phone": None, "contact_form_url": None,
+    })
+    found = prospect_engine.search_businesses(
+        "Bordeaux", "all", 20, 20, enrich=False, contact_mode="email", legal_form="ei"
+    )
+    assert searched == ["11111111100011", "22222222200022", "33333333300033"]
+    assert len(found) == 3
