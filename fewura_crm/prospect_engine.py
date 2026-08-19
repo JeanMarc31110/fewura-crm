@@ -82,7 +82,7 @@ FREE_MAIL_DOMAINS = {
 }
 BLOCKED_HOSTS = {
     "facebook.com", "instagram.com", "linkedin.com", "pagesjaunes.fr", "tripadvisor.fr",
-    "societe.com", "verif.com", "pappers.fr", "google.com", "maps.google.com", "x.com",
+    "societe.com", "verif.com", "pappers.fr", "google.com", "maps.google.com", "x.com", "lefigaro.fr", "univ-tlse3.fr",
     "twitter.com", "youtube.com",
 }
 CONTACT_HINTS = (
@@ -156,6 +156,8 @@ def is_public_business_email(email: str, website: str | None = None) -> bool:
         return False
     domain = _email_domain(email)
     if not domain or domain in DISPOSABLE_DOMAINS:
+        return False
+    if domain.rsplit(".", 1)[-1] in {"png", "jpg", "jpeg", "gif", "svg", "webp", "css", "js"}:
         return False
     local = email.split("@", 1)[0]
     if local in {"noreply", "no-reply", "donotreply", "do-not-reply"}:
@@ -303,7 +305,7 @@ def discover_official_website(
     siret: str | None = None,
 ) -> str | None:
     """Find a public business site using SIRENE identity data."""
-    if not company_name:
+    if not company_name or company_name.strip().upper() in {"[ND]", "ND"}:
         return None
     identity = " ".join(x for x in (address, city, siren, siret) if x)
     queries = [
