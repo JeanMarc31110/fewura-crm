@@ -17,6 +17,10 @@ from .time_utils import local_input_to_utc_sql
 _scheduler_started = False
 _scheduler_lock = threading.Lock()
 
+EMAIL_BATCH_SIZE = 50
+EMAIL_BATCH_INTERVAL_SECONDS = 30 * 60
+GLOBAL_EMAIL_LIMIT_24H = 400
+
 SMS_SENDER_NUMBER = "+33773547857"
 
 APPROVED_EMAIL_SUBJECT = "Optimisez votre activité et développez votre clientèle avec un Agent IA"
@@ -429,7 +433,7 @@ def _log(con, prospect_id: int, campaign_id: int, channel: str, status: str, rec
     )
 
 
-def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int = 500) -> dict:
+def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int = EMAIL_BATCH_SIZE) -> dict:
     init_db()
     con = connect()
     camp = con.execute("SELECT * FROM campaigns WHERE id=?", (campaign_id,)).fetchone()
@@ -463,6 +467,7 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
     ).fetchall()
     stats = {"processed": 0, "sent": 0, "simulated": 0, "errors": 0, "skipped": 0, "email": 0, "sms": 0}
     sms_cfg = sms_status()
+    paused_reason = ""
     for row in recips:
         p = dict(row)
         rid = row["id"]
@@ -472,6 +477,15 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
         recipient = p.get("email") if channel == "email" else p.get("phone")
         stats["processed"] += 1
         try:
+            if mode == "reel" and channel == "email":
+                quota = con.execute(
+                    "SELECT count(*) FROM communications "
+                    "WHERE channel='email' AND status='sent' "
+                    "AND datetime(created_at)>=datetime('now','-24 hours')"
+                ).fetchone()[0]
+                if quota >= GLOBAL_EMAIL_LIMIT_24H:
+                    paused_reason = f"Plafond global atteint ({GLOBAL_EMAIL_LIMIT_24H} emails sur 24 h)"
+                    break
             if channel not in {"email", "sms"}:
                 raise RuntimeError("Aucun canal disponible")
             if mode == "simulation":
@@ -508,9 +522,27 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
     ).fetchone()[0]
     if pending == 0:
         con.execute("UPDATE campaigns SET status='terminee',finished_at=CURRENT_TIMESTAMP WHERE id=?", (campaign_id,))
+    elif mode == "reel":
+        if paused_reason:
+            con.execute(
+                "UPDATE campaigns SET status='planifiee',scheduled_at=datetime('now','+1 second') WHERE id=?",
+                (campaign_id,),
+            )
+        else:
+            con.execute(
+                "UPDATE campaigns SET status='planifiee',scheduled_at=datetime('now','+1800 seconds') WHERE id=?",
+                (campaign_id,),
+            )
     con.commit()
     con.close()
-    return stats | {"campaign_id": campaign_id, "mode": mode, "pending": pending}
+    return stats | {
+        "campaign_id": campaign_id,
+        "mode": mode,
+        "pending": pending,
+        "paused": bool(paused_reason),
+        "paused_reason": paused_reason,
+        "batch_size": EMAIL_BATCH_SIZE,
+    }
 
 
 def retry_errors(campaign_id: int) -> int:
