@@ -506,6 +506,8 @@ def run_campaign(campaign_id: int, force_mode: str | None = None, max_items: int
                 (status, status, rid),
             )
             _log(con, p["prospect_id"], campaign_id, channel, status, recipient or "", subject, body)
+            if mode == "reel" and status == "sent":
+                con.execute("UPDATE prospects SET status='archive',updated_at=CURRENT_TIMESTAMP WHERE id=?", (p["prospect_id"],))
             con.commit()
             if mode == "reel" and channel == "sms" and sms_cfg["delay_seconds"] > 0:
                 time.sleep(sms_cfg["delay_seconds"])
