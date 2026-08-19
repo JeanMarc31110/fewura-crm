@@ -645,8 +645,12 @@ def test_prospect_contact_mode_filters_email_and_phone(monkeypatch):
             {"type": "node", "id": 3, "lat": 43.6, "lon": 1.4, "tags": {"name": "Téléphone seul", "office": "transport", "phone": "0611225566"}},
         ]},
     )
-    assert [p["company_name"] for p in prospect_engine.search_businesses("Toulouse", "transport", 20, 50, enrich=False, contact_mode="email")] == ["Email et téléphone", "Email seul"]
-    assert [p["company_name"] for p in prospect_engine.search_businesses("Toulouse", "transport", 20, 50, enrich=False, contact_mode="phone")] == ["Email et téléphone", "Téléphone seul"]
+    email_results = prospect_engine.search_businesses("Toulouse", "transport", 20, 50, enrich=False, contact_mode="email")
+    phone_results = prospect_engine.search_businesses("Toulouse", "transport", 20, 50, enrich=False, contact_mode="phone")
+    assert [p["company_name"] for p in email_results] == ["Email et téléphone", "Email seul"]
+    assert all(not p.get("phone") for p in email_results)
+    assert [p["company_name"] for p in phone_results] == ["Email et téléphone", "Téléphone seul"]
+    assert all(not p.get("email") for p in phone_results)
     assert len(prospect_engine.search_businesses("Toulouse", "transport", 20, 50, enrich=False, contact_mode="either")) == 3
 
 
@@ -742,4 +746,5 @@ def test_web_enrichment_rejects_image_emails_and_nd_identity(monkeypatch):
     assert prospect_engine.is_public_business_email("lachaîn emetéo@2x.png".replace(" ", ""), None) is False
     monkeypatch.setattr(prospect_engine, "_search_web_results", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ND ne doit pas être recherché")))
     assert prospect_engine.discover_official_website("[ND]", "Toulouse") is None
+
 
