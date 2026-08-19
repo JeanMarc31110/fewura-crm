@@ -98,3 +98,39 @@ def test_legal_form_filter_never_falls_back_to_osm(monkeypatch):
     assert prospect_engine.search_businesses(
         "Bordeaux", "all", 20, 10, enrich=False, contact_mode="either", legal_form="ei"
     ) == []
+
+
+
+def test_sirene_discards_inactive_establishments(monkeypatch):
+    class Response:
+        status_code = 200
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
+                "etablissements": [
+                    {
+                        "etatAdministratifEtablissement": "F",
+                        "siret": "11111111100011",
+                        "uniteLegale": {"denominationUniteLegale": "Fermée"},
+                    },
+                    {
+                        "etatAdministratifEtablissement": "A",
+                        "siret": "22222222200022",
+                        "uniteLegale": {"denominationUniteLegale": "Active"},
+                    },
+                ]
+            }
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def get(self, endpoint, params=None):
+            return Response()
+    monkeypatch.setattr(sirene, "_api_key", lambda: "test-key")
+    monkeypatch.setattr(sirene.httpx, "Client", Client)
+    found = search_sirene("Bordeaux", max_results=10, legal_form="ei")
+    assert [item["company_name"] for item in found] == ["Active"]
