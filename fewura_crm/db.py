@@ -126,6 +126,20 @@ def init_db() -> None:
       FOREIGN KEY(prospect_id) REFERENCES prospects(id) ON DELETE SET NULL,
       FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     );
+    CREATE TABLE IF NOT EXISTS prospect_search_runs(
+      search_key TEXT PRIMARY KEY,
+      next_offset INTEGER NOT NULL DEFAULT 0,
+      analyzed_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS prospect_search_analysis(
+      search_key TEXT NOT NULL,
+      siret TEXT NOT NULL,
+      analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      has_email INTEGER NOT NULL DEFAULT 0,
+      has_phone INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(search_key, siret)
+    );
             """)
             _ensure_column(con, "campaigns", "sms_body", "TEXT NOT NULL DEFAULT ''")
             for column, definition in [
@@ -141,6 +155,7 @@ def init_db() -> None:
             con.execute("CREATE INDEX IF NOT EXISTS idx_prospects_company_city ON prospects(company_name, city)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_campaigns_schedule ON campaigns(status, scheduled_at)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_communications_prospect ON communications(prospect_id, created_at)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_search_analysis_siret ON prospect_search_analysis(siret)")
             con.commit()
             _initialized_databases.add(db_key)
         except Exception:
@@ -179,4 +194,5 @@ def execute(sql: str, params=()):
         raise
     finally:
         con.close()
+
 
