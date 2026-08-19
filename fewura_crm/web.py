@@ -65,6 +65,7 @@ def dashboard():
 def prospects(q: str="", status: str=""):
     params=[]; where=[]
     where.append("(coalesce(email,'')<>'' OR coalesce(phone,'')<>'')")
+    where.append("coalesce(status,'nouveau')<>'archive'")
     if q:
         like=f"%{q}%"; where.append("(company_name LIKE ? OR contact_name LIKE ? OR email LIKE ? OR phone LIKE ? OR city LIKE ? OR category LIKE ?)"); params += [like]*6
     if status: where.append("status=?"); params.append(status)
