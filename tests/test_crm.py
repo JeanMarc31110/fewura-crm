@@ -658,3 +658,43 @@ def test_prospect_page_exposes_contact_modes_and_expanded_activity_choices():
         assert "Téléphone uniquement" in page.text
         assert "Santé" in page.text
         assert "Événementiel" in page.text
+
+
+
+def test_real_campaign_uses_batches_of_50_and_schedules_next_batch(monkeypatch):
+    ids = [execute("INSERT INTO prospects(company_name,email) VALUES(?,?)", (f"Lot {i}", f"lot{i}@example.test")) for i in range(55)]
+    cid = create_campaign_for_selection(
+        "Lots de 50", APPROVED_EMAIL_SUBJECT, APPROVED_EMAIL_BODY, ids,
+        channel="email", mode="simulation",
+    )
+    sent = []
+    monkeypatch.setattr(outreach, "_send_email", lambda *args, **kwargs: sent.append(args))
+    assert run_campaign(cid)["simulated"] == 50
+    result = run_campaign(cid, force_mode="reel")
+    assert result["sent"] == 50
+    assert len(sent) == 50
+    assert result["pending"] == 5
+    campaign = one("SELECT status,scheduled_at FROM campaigns WHERE id=?", (cid,))
+    assert campaign["status"] == "planifiee"
+    assert campaign["scheduled_at"]
+
+
+def test_global_email_limit_pauses_all_campaigns(monkeypatch):
+    pid = execute("INSERT INTO prospects(company_name,email) VALUES(?,?)", ("Quota", "quota@example.test"))
+    cid = create_campaign_for_selection(
+        "Quota global", APPROVED_EMAIL_SUBJECT, APPROVED_EMAIL_BODY, [pid],
+        channel="email", mode="reel",
+    )
+    for index in range(400):
+        execute(
+            "INSERT INTO communications(channel,direction,status,recipient,subject,body) VALUES(?,?,?,?,?,?)",
+            ("email", "sortant", "sent", f"old{index}@example.test", "old", "old"),
+        )
+    sent = []
+    monkeypatch.setattr(outreach, "_send_email", lambda *args, **kwargs: sent.append(args))
+    result = run_campaign(cid, force_mode="reel")
+    assert result["sent"] == 0
+    assert result["paused"] is True
+    assert result["pending"] == 1
+    assert sent == []
+    assert one("SELECT status FROM campaigns WHERE id=?", (cid,))["status"] == "planifiee"
