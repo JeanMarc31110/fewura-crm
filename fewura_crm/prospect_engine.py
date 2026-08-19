@@ -394,11 +394,11 @@ def _merge_registry_results(primary: list[dict], secondary: list[dict], limit: i
     return merged
 
 
-def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either", legal_form: str = "all") -> list[dict]:
+def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either", legal_form: str = "all", include_unusable: bool = False, sirene_start: int = 0, skip_sirets: set[str] | None = None) -> list[dict]:
     # SIRENE/INSEE is the primary source. OSM remains a fallback when the API
     # is not configured, unavailable, or returns no establishment.
     try:
-        registry = search_sirene(zone, category, max_results, legal_form)
+        registry = search_sirene(zone, category, max_results, legal_form, sirene_start)
     except SireneUnavailable:
         registry = []
     # Annuaire des Entreprises is an official complementary index. It is
@@ -413,6 +413,8 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
             )
         except SireneUnavailable:
             pass
+    if skip_sirets:
+        registry = [item for item in registry if str(item.get("siret") or "") not in skip_sirets]
     if not registry and legal_form != "all":
         # OSM does not expose the official legal form. Falling back here would
         # return companies that do not match the user's SIRENE filter.
@@ -436,6 +438,8 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
                 if not is_public_business_email(prospect["email"], prospect.get("website")):
                     prospect["email"] = None
             if not contact_matches_mode(prospect, contact_mode):
+                if include_unusable:
+                    output.append(prospect)
                 continue
             prospect["lead_score"] = lead_score(prospect)
             prospect["confidence"] = round(prospect["lead_score"] / 100, 2)
@@ -445,7 +449,7 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
 
     geo = geocode(zone)
     radius = max(1000, min(int(radius_km) * 1000, 50000))
-    limit = max(1, min(int(max_results), 200))
+    limit = max(1, min(int(max_results), 1000))
     query = build_overpass_query(geo["lat"], geo["lon"], radius, category)
     try:
         data = _fetch_overpass(query)
@@ -500,6 +504,10 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
                 prospect["email"] = None
         # A result without any usable contact channel cannot be actioned.
         if not contact_matches_mode(prospect, contact_mode):
+            if include_unusable:
+                output.append(prospect)
+            if len(output) >= limit:
+                break
             continue
         prospect["lead_score"] = lead_score(prospect)
         prospect["confidence"] = round(prospect["lead_score"] / 100, 2)
@@ -508,6 +516,7 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
         if len(output) >= limit:
             break
     return output
+
 
 
 
