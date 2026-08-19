@@ -187,7 +187,9 @@ def search_recherche_entreprises(
         with httpx.Client(timeout=httpx.Timeout(connect=8, read=25, write=8, pool=8), follow_redirects=True, headers=_api_headers()) as client:
             payload = None
             total_pages = 1
-            for page in range(1, 11):
+            # A bounded number of pages keeps a broad search responsive; the
+            # user can request another batch from the CRM if needed.
+            for page in range(1, 4):
                 params["page"] = page
                 response = client.get(RECHERCHE_ENTREPRISES_ENDPOINT, params=params)
                 if response.status_code in (429, 500, 502, 503, 504):
@@ -241,4 +243,5 @@ def search_recherche_entreprises(
         raise SireneUnavailable(f"Recherche Entreprises indisponible : {exc}") from exc
 
     return results
+
 
