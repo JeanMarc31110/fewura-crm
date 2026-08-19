@@ -698,3 +698,21 @@ def test_global_email_limit_pauses_all_campaigns(monkeypatch):
     assert result["pending"] == 1
     assert sent == []
     assert one("SELECT status FROM campaigns WHERE id=?", (cid,))["status"] == "planifiee"
+
+
+
+def test_successful_real_send_archives_contact_but_keeps_history(monkeypatch):
+    pid = execute(
+        "INSERT INTO prospects(company_name,email,status) VALUES(?,?,?)",
+        ("Contact envoyé", "archive@example.test", "nouveau"),
+    )
+    cid = create_campaign_for_selection(
+        "Archivage après envoi", APPROVED_EMAIL_SUBJECT, APPROVED_EMAIL_BODY,
+        [pid], channel="email", mode="reel",
+    )
+    monkeypatch.setattr(outreach, "_send_email", lambda *args, **kwargs: None)
+    result = run_campaign(cid, force_mode="reel")
+    assert result["sent"] == 1
+    assert one("SELECT status FROM prospects WHERE id=?", (pid,))["status"] == "archive"
+    assert one("SELECT count(*) AS n FROM communications WHERE prospect_id=? AND status='sent'", (pid,))["n"] == 1
+    assert one("SELECT count(*) AS n FROM campaign_recipients WHERE prospect_id=? AND status='sent'", (pid,))["n"] == 1
