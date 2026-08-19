@@ -43,7 +43,7 @@ def test_sirene_is_primary_before_osm_and_then_scrapes_site(monkeypatch):
         "contact_form_url": None,
     }
     monkeypatch.setattr(prospect_engine, "search_sirene", lambda *args: [dict(registry_record)])
-    monkeypatch.setattr(prospect_engine, "extract_public_contacts", lambda *args: {
+    monkeypatch.setattr(prospect_engine, "extract_public_contacts", lambda *args, **kwargs: {
         "email": "contact@entreprise.test", "phone": "0611223344", "contact_form_url": None,
     })
     monkeypatch.setattr(prospect_engine, "geocode", lambda *args: (_ for _ in ()).throw(AssertionError("OSM ne doit pas être appelé")))
@@ -241,7 +241,7 @@ def test_every_sirene_result_is_web_enriched_before_contact_filter(monkeypatch):
         searched.append(kwargs.get("siret"))
         return "https://example.test"
     monkeypatch.setattr(prospect_engine, "discover_official_website", discover)
-    monkeypatch.setattr(prospect_engine, "extract_public_contacts", lambda website: {
+    monkeypatch.setattr(prospect_engine, "extract_public_contacts", lambda website, **kwargs: {
         "email": "contact@example.test", "phone": None, "contact_form_url": None,
     })
     monkeypatch.setattr(prospect_engine, "search_recherche_entreprises", lambda *args: [])
@@ -250,6 +250,7 @@ def test_every_sirene_result_is_web_enriched_before_contact_filter(monkeypatch):
     )
     assert searched == ["11111111100011", "22222222200022", "33333333300033"]
     assert len(found) == 3
+
 
 
 
