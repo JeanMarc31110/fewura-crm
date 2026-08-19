@@ -369,6 +369,11 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
         registry = search_sirene(zone, category, max_results, legal_form)
     except SireneUnavailable:
         registry = []
+    if not registry and legal_form != "all":
+        # OSM does not expose the official legal form. Falling back here would
+        # return companies that do not match the user's SIRENE filter.
+        return []
+
     if registry:
         output = []
         for prospect in registry:
