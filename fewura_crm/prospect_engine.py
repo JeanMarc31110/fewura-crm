@@ -294,27 +294,42 @@ def _search_web_results(query: str, max_results: int = 8) -> list[dict]:
         return []
 
 
-def discover_official_website(company_name: str, city: str | None = None, max_results: int = 8) -> str | None:
+def discover_official_website(
+    company_name: str,
+    city: str | None = None,
+    max_results: int = 8,
+    address: str | None = None,
+    siren: str | None = None,
+    siret: str | None = None,
+) -> str | None:
+    """Find a public business site using SIRENE identity data."""
     if not company_name:
         return None
-    query = f'"{company_name}" {city or ""} site officiel contact'.strip()
+    identity = " ".join(x for x in (address, city, siren, siret) if x)
+    queries = [
+        f'"{company_name}" {identity} site officiel contact'.strip(),
+        f'"{company_name}" {city or ""} email téléphone'.strip(),
+    ]
     company_tokens = _tokens(company_name)
     city_tokens = _tokens(city)
     ranked = []
-    for item in _search_web_results(query, max_results):
-        url = item.get("href") or item.get("url")
-        if not url:
-            continue
-        host = _website_domain(url)
-        if not host or host in BLOCKED_HOSTS or any(host.endswith("." + blocked) for blocked in BLOCKED_HOSTS):
-            continue
-        haystack = " ".join([host, item.get("title", ""), item.get("body", "")]).lower()
-        score = 4 * sum(1 for token in company_tokens if token in haystack) + sum(1 for token in city_tokens if token in haystack)
-        if any(word in haystack for word in ("contact", "officiel", "accueil", "cabinet", "agence")):
-            score += 2
-        if host.endswith(".fr"):
-            score += 1
-        ranked.append((score, url))
+    seen_urls = set()
+    for query in queries:
+        for item in _search_web_results(query, max_results):
+            url = item.get("href") or item.get("url")
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            host = _website_domain(url)
+            if not host or host in BLOCKED_HOSTS or any(host.endswith("." + blocked) for blocked in BLOCKED_HOSTS):
+                continue
+            haystack = " ".join([host, item.get("title", ""), item.get("body", "")]).lower()
+            score = 4 * sum(1 for token in company_tokens if token in haystack) + sum(1 for token in city_tokens if token in haystack)
+            if any(word in haystack for word in ("contact", "officiel", "accueil", "cabinet", "agence", "email", "téléphone")):
+                score += 2
+            if host.endswith(".fr"):
+                score += 1
+            ranked.append((score, url))
     ranked.sort(key=lambda item: item[0], reverse=True)
     return ranked[0][1] if ranked and ranked[0][0] >= 4 else None
 
@@ -377,9 +392,12 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
     if registry:
         output = []
         for prospect in registry:
-            if enrich and not prospect.get("website"):
-                prospect["website"] = discover_official_website(prospect["company_name"], prospect["city"])
-            if enrich and prospect.get("website") and not prospect.get("email"):
+            if not prospect.get("website"):
+                prospect["website"] = discover_official_website(
+                    prospect["company_name"], prospect["city"], address=prospect.get("address"),
+                    siren=prospect.get("siren"), siret=prospect.get("siret")
+                )
+            if prospect.get("website") and not prospect.get("email"):
                 contacts = extract_public_contacts(prospect["website"])
                 prospect["email"] = contacts.get("email")
                 prospect["contact_form_url"] = contacts.get("contact_form_url")
