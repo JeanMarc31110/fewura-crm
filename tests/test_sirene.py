@@ -89,3 +89,12 @@ def test_sirene_rejects_unknown_legal_form(monkeypatch):
         assert "legal_form invalide" in str(exc)
     else:
         raise AssertionError("Une forme juridique inconnue doit être refusée")
+
+
+
+def test_legal_form_filter_never_falls_back_to_osm(monkeypatch):
+    monkeypatch.setattr(prospect_engine, "search_sirene", lambda *args: [])
+    monkeypatch.setattr(prospect_engine, "geocode", lambda *args: (_ for _ in ()).throw(AssertionError("OSM ne doit pas être utilisé")))
+    assert prospect_engine.search_businesses(
+        "Bordeaux", "all", 20, 10, enrich=False, contact_mode="either", legal_form="ei"
+    ) == []
