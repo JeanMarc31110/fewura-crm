@@ -78,7 +78,41 @@ def test_sirene_legal_form_adds_official_query_filter(monkeypatch):
     assert search_sirene("Toulouse", max_results=10, legal_form="sas") == []
     assert captured["endpoint"] == sirene.SIRENE_ENDPOINT
     assert "categorieJuridiqueUniteLegale:5710" in captured["params"]["q"]
-    assert captured["params"]["nombre"] == 10
+    assert captured["params"]["nombre"] == 200
+    assert captured["params"]["debut"] == 0
+
+
+def test_sirene_paginates_up_to_requested_batch(monkeypatch):
+    calls = []
+    class Response:
+        status_code = 200
+        def __init__(self, index):
+            self.index = index
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"etablissements": [{
+                "siret": f"123456789{self.index:05d}{item:02d}",
+                "siren": "123456789",
+                "uniteLegale": {"denominationUniteLegale": f"EI {self.index}-{item}"},
+                "adresseEtablissement": {"libelleCommuneEtablissement": "Toulouse"},
+                "periodesEtablissement": [{"etatAdministratifEtablissement": "A"}],
+            } for item in range(200)]}
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def get(self, endpoint, params=None):
+            calls.append(params["debut"])
+            return Response(len(calls))
+    monkeypatch.setattr(sirene, "_api_key", lambda: "test-key")
+    monkeypatch.setattr(sirene.httpx, "Client", Client)
+    found = search_sirene("Toulouse", max_results=201, legal_form="ei")
+    assert len(found) == 201
+    assert calls == [0, 200]
 
 
 def test_sirene_rejects_unknown_legal_form(monkeypatch):
@@ -216,5 +250,6 @@ def test_every_sirene_result_is_web_enriched_before_contact_filter(monkeypatch):
     )
     assert searched == ["11111111100011", "22222222200022", "33333333300033"]
     assert len(found) == 3
+
 
 
