@@ -404,7 +404,7 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
     # Annuaire des Entreprises is an official complementary index. It is
     # useful when SIRENE is sparse or when the requested legal form has many
     # establishments split across legal units.
-    if len(registry) < max(1, int(max_results)):
+    if legal_form != "all" and (not registry or len(registry) < max(1, int(max_results))):
         try:
             registry = _merge_registry_results(
                 registry,
@@ -508,5 +508,6 @@ def search_businesses(zone: str, category: str = "all", radius_km: int = 20, max
         if len(output) >= limit:
             break
     return output
+
 
 
