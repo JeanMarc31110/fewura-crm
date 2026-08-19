@@ -7,6 +7,10 @@ from .paths import exports_dir
 from .prospect_engine import search_businesses, fingerprint, lead_score, contact_matches_mode
 
 
+PROSPECT_SEARCH_BATCH_SIZE = 1000
+PROSPECT_SEARCH_TARGET_MAX = 400
+
+
 def function_tool(fn):
     return fn
 
@@ -48,28 +52,39 @@ def _merge_prospect_from_fewura(p: dict) -> tuple[int, bool]:
 @function_tool
 def prospect_search_import(zone: str, category: str = "all", radius_km: int = 20, max_results: int = 50, enrich: bool = True, contact_mode: str = "either", legal_form: str = "all") -> dict:
     init_db()
-    max_results = max(1, min(int(max_results), 1000))
+    target_contacts = max(1, min(int(max_results), PROSPECT_SEARCH_TARGET_MAX))
     search_key = hashlib.sha256(json.dumps({"zone": zone.strip().casefold(), "category": category, "radius_km": int(radius_km), "contact_mode": contact_mode, "legal_form": legal_form}, sort_keys=True).encode()).hexdigest()
     run = one("SELECT * FROM prospect_search_runs WHERE search_key=?", (search_key,))
     start = int(run["next_offset"] if run else 0)
     analyzed_sirets = {row["siret"] for row in rows("SELECT siret FROM prospect_search_analysis WHERE search_key=?", (search_key,)) if row.get("siret")}
     analyzed_sirets.update(row["siret"] for row in rows("SELECT siret FROM prospects WHERE siret IS NOT NULL AND trim(siret)<>'' AND last_checked_at IS NOT NULL") if row.get("siret"))
-    found = search_businesses(zone, category, radius_km, max_results, enrich=enrich, contact_mode=contact_mode, legal_form=legal_form, include_unusable=True, sirene_start=start, skip_sirets=analyzed_sirets)
-    created = updated = usable = 0; ids = []
-    for prospect in found:
-        siret = str(prospect.get("siret") or "").strip()
-        if siret:
-            execute("INSERT OR REPLACE INTO prospect_search_analysis(search_key,siret,has_email,has_phone,analyzed_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP)", (search_key, siret, int(bool(prospect.get("email"))), int(bool(prospect.get("phone")))))
-        if not contact_matches_mode(prospect, contact_mode):
-            continue
-        usable += 1
-        pid, is_created = _merge_prospect_from_fewura(prospect)
-        ids.append(pid); created += int(is_created); updated += int(not is_created)
-    # The SIRENE offset advances by the requested source batch, not by the
-    # number left after skipping previously analyzed SIRETs.
-    next_offset = start + max_results
+    created = updated = usable = analyzed_total = 0; ids = []
+    next_offset = start
+    while usable < target_contacts:
+        found = search_businesses(zone, category, radius_km, PROSPECT_SEARCH_BATCH_SIZE, enrich=enrich, contact_mode=contact_mode, legal_form=legal_form, include_unusable=True, sirene_start=next_offset, skip_sirets=analyzed_sirets)
+        if not found:
+            break
+        analyzed_total += len(found)
+        for prospect in found:
+            siret = str(prospect.get("siret") or "").strip()
+            if siret:
+                analyzed_sirets.add(siret)
+                execute("INSERT OR REPLACE INTO prospect_search_analysis(search_key,siret,has_email,has_phone,analyzed_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP)", (search_key, siret, int(bool(prospect.get("email"))), int(bool(prospect.get("phone")))))
+            if not contact_matches_mode(prospect, contact_mode):
+                continue
+            usable += 1
+            pid, is_created = _merge_prospect_from_fewura(prospect)
+            ids.append(pid); created += int(is_created); updated += int(not is_created)
+            if usable >= target_contacts:
+                break
+        # The source offset advances by the full source batch, not by the
+        # number of contacts found or by the number left after deduplication.
+        next_offset += PROSPECT_SEARCH_BATCH_SIZE
+        if len(found) < PROSPECT_SEARCH_BATCH_SIZE:
+            break
     execute("INSERT INTO prospect_search_runs(search_key,next_offset,analyzed_count,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(search_key) DO UPDATE SET next_offset=excluded.next_offset, analyzed_count=prospect_search_runs.analyzed_count+excluded.analyzed_count, updated_at=CURRENT_TIMESTAMP", (search_key, next_offset, len(found)))
-    return {"ok": True, "engine": "FEWURA PROSPECT", "zone": zone, "category": category, "legal_form": legal_form, "found": usable, "analyzed": len(found), "created": created, "updated": updated, "next_offset": next_offset, "prospect_ids": ids}
+    execute("UPDATE prospect_search_runs SET analyzed_count=analyzed_count+? WHERE search_key=?", (analyzed_total - len(found), search_key)) if analyzed_total != len(found) else None
+    return {"ok": True, "engine": "FEWURA PROSPECT", "zone": zone, "category": category, "legal_form": legal_form, "found": usable, "target": target_contacts, "analyzed": analyzed_total, "created": created, "updated": updated, "next_offset": next_offset, "prospect_ids": ids}
 
 
 @function_tool
@@ -147,6 +162,7 @@ def delete_prospect(prospect_id: int, confirmation: str) -> dict:
 
 
 TOOLS = [prospect_search_import,list_prospects,search_prospects,create_prospect,update_prospect_status,add_note,add_task,complete_task,crm_summary,export_prospects_csv,delete_prospect]
+
 
 
 
