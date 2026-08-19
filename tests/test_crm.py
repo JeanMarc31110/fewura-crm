@@ -716,3 +716,10 @@ def test_successful_real_send_archives_contact_but_keeps_history(monkeypatch):
     assert one("SELECT status FROM prospects WHERE id=?", (pid,))["status"] == "archive"
     assert one("SELECT count(*) AS n FROM communications WHERE prospect_id=? AND status='sent'", (pid,))["n"] == 1
     assert one("SELECT count(*) AS n FROM campaign_recipients WHERE prospect_id=? AND status='sent'", (pid,))["n"] == 1
+
+
+
+def test_web_enrichment_rejects_image_emails_and_nd_identity(monkeypatch):
+    assert prospect_engine.is_public_business_email("lachaîn emetéo@2x.png".replace(" ", ""), None) is False
+    monkeypatch.setattr(prospect_engine, "_search_web_results", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ND ne doit pas être recherché")))
+    assert prospect_engine.discover_official_website("[ND]", "Toulouse") is None
