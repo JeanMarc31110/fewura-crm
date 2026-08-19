@@ -2,7 +2,7 @@ import os
 
 import fewura_crm.prospect_engine as prospect_engine
 import fewura_crm.sirene as sirene
-from fewura_crm.sirene import _flatten_establishment, search_sirene
+from fewura_crm.sirene import _flatten_establishment, search_recherche_entreprises, search_sirene
 
 
 def test_sirene_record_keeps_official_identifiers_and_address():
@@ -94,10 +94,68 @@ def test_sirene_rejects_unknown_legal_form(monkeypatch):
 
 def test_legal_form_filter_never_falls_back_to_osm(monkeypatch):
     monkeypatch.setattr(prospect_engine, "search_sirene", lambda *args: [])
+    monkeypatch.setattr(prospect_engine, "search_recherche_entreprises", lambda *args: [])
     monkeypatch.setattr(prospect_engine, "geocode", lambda *args: (_ for _ in ()).throw(AssertionError("OSM ne doit pas être utilisé")))
     assert prospect_engine.search_businesses(
         "Bordeaux", "all", 20, 10, enrich=False, contact_mode="either", legal_form="ei"
     ) == []
+
+
+def test_recherche_entreprises_keeps_only_active_exact_city_and_legal_form(monkeypatch):
+    class Response:
+        status_code = 200
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "siren": "111111111",
+                        "nom_complet": "EI Toulouse",
+                        "nature_juridique": "1000",
+                        "matching_etablissements": [
+                            {"siret": "11111111100011", "libelle_commune": "TOULOUSE", "etat_administratif": "A", "code_postal": "31000", "adresse": "1 RUE TEST", "activite_principale": "62.01Z"},
+                            {"siret": "11111111100022", "libelle_commune": "PARIS", "etat_administratif": "A"},
+                        ],
+                    },
+                    {
+                        "siren": "222222222",
+                        "nom_complet": "EI Fermée",
+                        "nature_juridique": "1000",
+                        "matching_etablissements": [
+                            {"siret": "22222222200022", "libelle_commune": "TOULOUSE", "etat_administratif": "F"},
+                        ],
+                    },
+                ]
+            }
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def get(self, endpoint, params=None):
+            assert endpoint == sirene.RECHERCHE_ENTREPRISES_ENDPOINT
+            assert params["nature_juridique"] == "1000"
+            return Response()
+    monkeypatch.setattr(sirene.httpx, "Client", Client)
+    found = search_recherche_entreprises("Toulouse", max_results=10, legal_form="ei")
+    assert [item["siret"] for item in found] == ["11111111100011"]
+    assert found[0]["source_type"] == "Recherche Entreprises / data.gouv.fr"
+
+
+def test_registry_sources_are_merged_by_siret(monkeypatch):
+    primary = [{"company_name": "Déjà là", "siret": "11111111100011", "city": "Toulouse", "email": "a@example.test", "phone": None}]
+    secondary = [
+        {"company_name": "Doublon", "siret": "11111111100011", "city": "Toulouse", "email": None, "phone": None},
+        {"company_name": "Nouveau", "siret": "22222222200022", "city": "Toulouse", "email": "b@example.test", "phone": None},
+    ]
+    monkeypatch.setattr(prospect_engine, "search_sirene", lambda *args: primary)
+    monkeypatch.setattr(prospect_engine, "search_recherche_entreprises", lambda *args: secondary)
+    monkeypatch.setattr(prospect_engine, "discover_official_website", lambda *args, **kwargs: None)
+    found = prospect_engine.search_businesses("Toulouse", max_results=2, enrich=False, contact_mode="email")
+    assert [item["siret"] for item in found] == ["11111111100011", "22222222200022"]
 
 
 
@@ -157,3 +215,4 @@ def test_every_sirene_result_is_web_enriched_before_contact_filter(monkeypatch):
     )
     assert searched == ["11111111100011", "22222222200022", "33333333300033"]
     assert len(found) == 3
+
