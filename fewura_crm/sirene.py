@@ -114,7 +114,7 @@ def search_sirene(zone: str, category: str = "all", max_results: int = 50, legal
         return []
     if legal_form not in LEGAL_FORM_LABELS:
         raise ValueError(f"legal_form invalide: {legal_form}")
-    query = f'libelleCommuneEtablissement:"{_escape_query(zone)}"'
+    query = f'-periode(etatAdministratifEtablissement:F) AND libelleCommuneEtablissement:"{_escape_query(zone)}"'
     codes = LEGAL_FORM_CODES.get(legal_form, ())
     if codes:
         legal_query = codes[0] if len(codes) == 1 else "(" + " OR ".join(codes) + ")"
@@ -138,7 +138,9 @@ def search_sirene(zone: str, category: str = "all", max_results: int = 50, legal
         raise SireneUnavailable(f"SIRENE indisponible : {exc}") from exc
     results = []
     for item in payload.get("etablissements", []):
-        if str(item.get("etatAdministratifEtablissement") or "").upper() != "A":
+        periods = item.get("periodesEtablissement") or []
+        current = next((period for period in periods if period.get("dateFin") in (None, "")), periods[0] if periods else None)
+        if current and str(current.get("etatAdministratifEtablissement") or "").upper() != "A":
             continue
         prospect = _flatten_establishment(item, category, zone, legal_form)
         if prospect:
