@@ -77,7 +77,7 @@ def test_sirene_legal_form_adds_official_query_filter(monkeypatch):
     monkeypatch.setattr(sirene.httpx, "Client", Client)
     assert search_sirene("Toulouse", max_results=10, legal_form="sas") == []
     assert captured["endpoint"] == sirene.SIRENE_ENDPOINT
-    assert "categorieJuridiqueUniteLegale:(5710)" in captured["params"]["q"]
+    assert "categorieJuridiqueUniteLegale:5710" in captured["params"]["q"]
     assert captured["params"]["nombre"] == 10
 
 
